@@ -136,6 +136,7 @@ class Work(Base):
     __table_args__ = (
         ForeignKeyConstraint(["organization_id","primary_artist_id"],["artists.organization_id","artists.id"],name="work_artist_same_org"),
         UniqueConstraint("organization_id","reference",name="work_reference_unique"),
+        UniqueConstraint("organization_id","id",name="work_org_id_unique"),
         UniqueConstraint("organization_id","iswc",name="work_iswc_unique"),
         CheckConstraint("category IN ('music','literary','audiovisual','visual','other')",name="work_category_valid"),
         CheckConstraint("status IN ('draft','registered','archived')",name="work_status_valid"),
@@ -151,3 +152,31 @@ class Work(Base):
     status: Mapped[str] = mapped_column(String(20),nullable=False,server_default="draft")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False,server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False,server_default=func.now())
+
+class WorkRightsDeclaration(Base):
+    __tablename__ = "work_rights_declarations"
+    __table_args__ = (
+        ForeignKeyConstraint(["organization_id","work_id"],["works.organization_id","works.id"]),
+        UniqueConstraint("organization_id","id",name="rights_declaration_org_id_unique"),
+        UniqueConstraint("organization_id","work_id","version",name="rights_declaration_version_unique"),
+        CheckConstraint("version>0 AND status IN ('draft','complete')",name="rights_declaration_valid"))
+    id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    work_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    version: Mapped[int] = mapped_column(Integer,nullable=False)
+    status: Mapped[str] = mapped_column(String(20),nullable=False)
+    created_by: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False,server_default=func.now())
+
+class WorkRightsShare(Base):
+    __tablename__ = "work_rights_shares"
+    __table_args__ = (
+        ForeignKeyConstraint(["organization_id","declaration_id"],["work_rights_declarations.organization_id","work_rights_declarations.id"]),
+        ForeignKeyConstraint(["organization_id","artist_id"],["artists.organization_id","artists.id"]),
+        CheckConstraint("basis_points BETWEEN 1 AND 10000",name="rights_share_range"),
+        CheckConstraint("role IN ('author','composer','publisher','beneficiary','other')",name="rights_share_role_valid"))
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
+    declaration_id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
+    artist_id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
+    role: Mapped[str] = mapped_column(String(30),primary_key=True)
+    basis_points: Mapped[int] = mapped_column(Integer,nullable=False)

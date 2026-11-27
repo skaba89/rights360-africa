@@ -208,6 +208,20 @@ def main():
             assert client.get(work_url,headers=headers,params={"q":"Integration","category":"music"}).json()[0]["id"] == work_id
             assert client.put(work_url+"/"+work_id,headers=headers,json={**work_data,"status":"registered"}).status_code == 200
             assert client.get(work_url+"/"+work_id,headers=headers).json()["status"] == "registered"
+            rights_url=work_url+"/"+work_id+"/rights"
+            share={"artist_id":artist_id,"role":"author","basis_points":6000}
+            other={"artist_id":artist_id,"role":"composer","basis_points":4000}
+            assert client.post(rights_url,headers=headers,json={"expected_version":0,"status":"complete","shares":[share]}).status_code == 422
+            assert client.post(rights_url,headers=headers,json={"expected_version":0,"shares":[{**share,"artist_id":str(foreign_id)}]}).status_code == 404
+            declaration=client.post(rights_url,headers=headers,json={"expected_version":0,"status":"complete","shares":[share,other]})
+            assert declaration.status_code == 201, declaration.text
+            assert declaration.json()["total_basis_points"] == 10000
+            assert client.post(rights_url,headers=headers,json={"expected_version":0,"shares":[share]}).status_code == 409
+            assert client.post(rights_url,headers=headers,json={"expected_version":1,"shares":[share]}).status_code == 201
+            history=client.get(rights_url,headers=headers).json()
+            assert [row["version"] for row in history] == [2,1]
+            assert history[1]["total_basis_points"] == 10000
+
             with admin.begin() as conn:
                 conn.execute(text("UPDATE module_entitlements SET granted=false WHERE organization_id=:org AND module_key='works'"),{"org":org_a})
             assert client.get(work_url,headers=headers).status_code == 403
@@ -281,6 +295,8 @@ def main():
             from app.login_limits import bucket_key
             conn.execute(text("DELETE FROM login_buckets WHERE bucket IN (:account,:peer)"), {"account":bucket_key("account",email),"peer":bucket_key("peer","testclient")})
             conn.execute(text("DELETE FROM audit_events WHERE organization_id=:org"), {"org":org_a})
+            conn.execute(text("DELETE FROM work_rights_shares WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
+            conn.execute(text("DELETE FROM work_rights_declarations WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM works WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM artists WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM module_entitlements WHERE organization_id=:org"),{"org":org_a})
