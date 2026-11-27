@@ -75,6 +75,12 @@ jobs:
           docker compose exec -T db pg_dump -U rights360 -d rights360 -Fc > "$secret_dir/test.dump"
           (cd "$secret_dir"; sha256sum test.dump > test.dump.sha256)
           bash ops/verify-restore.sh "$secret_dir/test.dump"
+      - name: Browser offline qualification
+        timeout-minutes: 4
+        run: |
+          npm install --prefix /tmp/rights360-browser --no-audit --no-fund playwright@1.56.1
+          /tmp/rights360-browser/node_modules/.bin/playwright install chromium
+          NODE_PATH=/tmp/rights360-browser/node_modules node backend/tests/offline_browser.cjs
       - name: Capture container diagnostics
         if: always()
         run: |
