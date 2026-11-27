@@ -156,7 +156,7 @@
   const workBase="/api/v1/works";
   const workCategories={music:"Musique",literary:"Littéraire",audiovisual:"Audiovisuel",visual:"Arts visuels",other:"Autre"};
   const workStatuses={draft:"Brouillon",registered:"Enregistrée",archived:"Archivée"};
-  function resetWorks(){editingWork=null;workOffset=0;el("work-workspace").hidden=true;el("work-list").replaceChildren();el("work-form").reset();el("work-search").reset();el("work-form-title").textContent="Nouvelle œuvre";}
+  function resetWorks(){resetRights();editingWork=null;workOffset=0;el("work-workspace").hidden=true;el("work-list").replaceChildren();el("work-form").reset();el("work-search").reset();el("work-form-title").textContent="Nouvelle œuvre";}
   function editWork(row){editingWork=row?.id||null;el("work-form").reset();el("work-form-title").textContent=row?"Modifier l’œuvre":"Nouvelle œuvre";if(row){for(const [field,key] of Object.entries({reference:"reference",title:"title",category:"category",artist:"primary_artist_id",iswc:"iswc",status:"status"}))el("work-"+field).value=row[key]||"";}}
   async function loadWorks(nextOffset=workOffset){
     const query=new URLSearchParams({q:el("work-query").value,limit:"20",offset:String(nextOffset)});
@@ -167,7 +167,8 @@
     for(const row of rows){const item=document.createElement("article");item.className="tenant-card";
       const title=document.createElement("strong");title.textContent=row.title;item.append(title);
       for(const value of [row.reference+" · "+workCategories[row.category]+" · "+workStatuses[row.status],row.iswc,"Artiste : "+row.primary_artist_id])if(value){const p=document.createElement("p");p.textContent=value;item.append(p);}
-      if(["admin","manager"].includes(identity?.role)){const button=document.createElement("button");button.type="button";button.textContent="Modifier";button.addEventListener("click",()=>{if(!busy)editWork(row);});item.append(button);}list.append(item);}
+      if(["admin","manager"].includes(identity?.role)){const button=document.createElement("button");button.type="button";button.textContent="Modifier";button.addEventListener("click",()=>{if(!busy)editWork(row);});item.append(button);}
+      const rights=document.createElement("button");rights.type="button";rights.textContent="Ayants droit";rights.addEventListener("click",()=>run(()=>openRights(row)));item.append(rights);list.append(item);}
     el("work-prev").disabled=workOffset===0;el("work-next").disabled=rows.length<20;el("work-page").textContent="Page "+(workOffset/20+1);
   }
   action("work-search",()=>loadWorks(0));
@@ -175,6 +176,39 @@
   el("work-next").addEventListener("click",()=>run(()=>loadWorks(workOffset+20)));
   el("work-new").addEventListener("click",()=>{if(!busy)editWork(null);});
   action("work-form",async()=>{const data={reference:el("work-reference").value,title:el("work-title").value,category:el("work-category").value,primary_artist_id:el("work-artist").value.trim(),iswc:el("work-iswc").value.trim()||null,status:el("work-status").value};await api(workBase+(editingWork?"/"+encodeURIComponent(editingWork):""),editingWork?"PUT":"POST",data,true);if(!token)return;editWork(null);await loadWorks(0);notice("Œuvre enregistrée.");});
+
+  let rightsWork=null, rightsVersion=0;
+  const rightsRoles={author:"Auteur",composer:"Compositeur",publisher:"Éditeur",beneficiary:"Bénéficiaire",other:"Autre"};
+  function resetRights(){rightsWork=null;rightsVersion=0;el("rights-workspace").hidden=true;el("rights-form").hidden=true;el("rights-history").replaceChildren();el("rights-rows").replaceChildren();el("rights-work-name").textContent="";el("rights-total").textContent="";el("rights-form").reset();}
+  function rightsTotal(){const total=Array.from(el("rights-rows").querySelectorAll("input[data-share]")).reduce((sum,input)=>sum+Number(input.value||0),0);el("rights-total").textContent="Total : "+(total/100).toFixed(2)+" %";}
+  function addRightsRow(share={}){
+    if(el("rights-rows").children.length>=100)return;
+    const row=document.createElement("div");row.className="tenant-card";
+    const artist=document.createElement("input");artist.required=true;artist.maxLength=36;artist.placeholder="UUID de l’artiste";artist.setAttribute("aria-label","UUID de l’ayant droit");artist.value=share.artist_id||"";
+    const role=document.createElement("select");role.setAttribute("aria-label","Qualité de l’ayant droit");
+    for(const [key,label] of Object.entries(rightsRoles)){const option=document.createElement("option");option.value=key;option.textContent=label;role.append(option);}role.value=share.role||"author";
+    const amount=document.createElement("input");amount.type="number";amount.required=true;amount.min="1";amount.max="10000";amount.step="1";amount.dataset.share="true";amount.placeholder="Points de base (100 = 1 %)";amount.setAttribute("aria-label","Quote-part en points de base");amount.value=share.basis_points||"";amount.addEventListener("input",rightsTotal);
+    const remove=document.createElement("button");remove.type="button";remove.textContent="Retirer";remove.addEventListener("click",()=>{if(!busy){row.remove();rightsTotal();}});row.append(artist,role,amount,remove);el("rights-rows").append(row);rightsTotal();
+  }
+  async function openRights(work){
+    resetRights();rightsWork=work;
+    const history=await api(workBase+"/"+encodeURIComponent(work.id)+"/rights","GET",undefined,true);
+    if(!token||rightsWork!==work)return;
+    el("rights-work-name").textContent=work.title;el("rights-workspace").hidden=false;
+    const latest=history[0];rightsVersion=latest?.version||0;
+    for(const declaration of history){
+      const item=document.createElement("article");item.className="tenant-card";const heading=document.createElement("strong");heading.textContent="Version "+declaration.version+" · "+(declaration.status==="complete"?"Complète":"Brouillon")+" · "+(declaration.total_basis_points/100).toFixed(2)+" %";item.append(heading);
+      for(const share of declaration.shares){const p=document.createElement("p");p.textContent=share.artist_id+" · "+rightsRoles[share.role]+" · "+(share.basis_points/100).toFixed(2)+" %";item.append(p);}el("rights-history").append(item);
+    }
+    if(["admin","manager"].includes(identity?.role)){el("rights-form").hidden=false;el("rights-status").value=latest?.status||"draft";for(const share of latest?.shares||[{artist_id:work.primary_artist_id,role:"author"}])addRightsRow(share);}
+  }
+  el("rights-close").addEventListener("click",()=>{if(!busy)resetRights();});
+  el("rights-add").addEventListener("click",()=>{if(!busy)addRightsRow();});
+  action("rights-form",async()=>{if(!rightsWork)return;const work=rightsWork;
+    const shares=Array.from(el("rights-rows").children).map(row=>({artist_id:row.children[0].value.trim(),role:row.children[1].value,basis_points:Number(row.children[2].value)}));
+    await api(workBase+"/"+encodeURIComponent(work.id)+"/rights","POST",{expected_version:rightsVersion,status:el("rights-status").value,shares},true);
+    if(!token)return;await openRights(work);notice("Nouvelle version enregistrée.");
+  });
   el("saved").addEventListener("change",()=>el("finish").disabled=!el("saved").checked);
   el("finish").addEventListener("click",()=>{clearSession();show("login");notice("MFA activé. Reconnectez-vous avec un nouveau code TOTP.");});
   el("open-invite").addEventListener("click",()=>{if(!busy)show("invite");});
