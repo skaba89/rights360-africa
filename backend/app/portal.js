@@ -72,7 +72,7 @@
   const tenantBase="/api/v1/organization";
   const roles={admin:"Administrateur",manager:"Gestionnaire",auditor:"Auditeur",artist:"Artiste"};
   function hideMemberInvitation(){el("member-invite-token").textContent="";el("member-invite-id").textContent="";el("member-invite-result").hidden=true;}
-  function resetInstitution(){resetAccounting();resetDistribution();resetBilling();resetTariffs();resetLicenses();resetWorks();resetArtists();identity=null;memberOffset=0;hideMemberInvitation();for(const id of ["institution-name","institution-role","institution-module-list","member-list","member-page"])el(id).replaceChildren();el("institution-modules").hidden=true;el("institution-members").hidden=true;}
+  function resetInstitution(){resetPayouts();resetAccounting();resetDistribution();resetBilling();resetTariffs();resetLicenses();resetWorks();resetArtists();identity=null;memberOffset=0;hideMemberInvitation();for(const id of ["institution-name","institution-role","institution-module-list","member-list","member-page"])el(id).replaceChildren();el("institution-modules").hidden=true;el("institution-members").hidden=true;}
   async function loadInstitution(){
     const me=await api("/api/v1/auth/me","GET",undefined,true);if(!token)return;
     if(me.mfa_required){identity=null;show("mfa");return;}
@@ -92,7 +92,7 @@
     const list=el("institution-module-list");list.replaceChildren();
     const artistEnabled=rows.some(row=>row.module_key==="artists"&&row.enabled);
     if(!artistEnabled)resetArtists();
-    if(!rows.some(row=>row.module_key==="finance"&&row.enabled)){resetAccounting();resetBilling();}
+    if(!rows.some(row=>row.module_key==="finance"&&row.enabled)){resetPayouts();resetAccounting();resetBilling();}
     if(!rows.some(row=>row.module_key==="royalties"&&row.enabled))resetDistribution();
     if(!rows.some(row=>row.module_key==="licenses"&&row.enabled)){resetTariffs();resetLicenses();}
     if(!rows.some(row=>row.module_key==="works"&&row.enabled))resetWorks();
@@ -108,6 +108,7 @@
       if(row.module_key==="finance"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir la facturation";open.addEventListener("click",()=>run(openBilling));item.append(open);}
       if(row.module_key==="royalties"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir les répartitions";open.addEventListener("click",()=>run(openDistribution));item.append(open);}
       if(row.module_key==="finance"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir le journal comptable";open.addEventListener("click",()=>run(openAccounting));item.append(open);}
+      if(row.module_key==="finance"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ordres de reversement";open.addEventListener("click",()=>run(openPayouts));item.append(open);}
       list.append(item);
     }
   }
@@ -335,6 +336,25 @@
   el("accounting-prev").addEventListener("click",()=>run(()=>loadAccounting(Math.max(0,accountingOffset-20))));
   el("accounting-next").addEventListener("click",()=>run(()=>loadAccounting(accountingOffset+20)));
   action("accounting-form",async()=>{if(!window.confirm("Comptabiliser cette source dans le journal auxiliaire ?"))return;const row=await api(accountingBase+"/entries","POST",{source_type:el("accounting-source-type").value,source_id:el("accounting-source-id").value.trim()},true);if(!token)return;el("accounting-form").reset();await loadAccounting(0);await loadAccountingLines(row);notice("Écriture enregistrée.");});
+
+  let payoutOffset=0;
+  const payoutBase="/api/v1/payouts";
+  const payoutStates={pending:"En attente de revue",rejected:"Rejeté",approved_for_review_only:"Double revue terminée — exécution désactivée"};
+  function resetPayouts(){payoutOffset=0;el("payout-workspace").hidden=true;el("payout-list").replaceChildren();el("payout-form").reset();el("payout-page").textContent="";}
+  async function openPayouts(){resetPayouts();el("payout-workspace").hidden=false;el("payout-form").hidden=!["admin","manager"].includes(identity?.role);await loadPayouts(0);}
+  async function loadPayouts(nextOffset=payoutOffset){
+    const rows=await api(payoutBase+"?limit=20&offset="+nextOffset,"GET",undefined,true);if(!token)return;
+    payoutOffset=nextOffset;const list=el("payout-list");list.replaceChildren();
+    for(const row of rows){const item=document.createElement("article");item.className="tenant-card";const title=document.createElement("strong");title.textContent=payoutStates[row.status];item.append(title);
+      for(const value of ["Ordre : "+row.id,"Ayant droit : "+row.artist_id,row.amount_minor+" "+row.currency+" (unités minimales)",row.channel,"Revues : "+row.reviews.filter(r=>r.decision==="approve").length+"/2"]) {const p=document.createElement("p");p.textContent=value;item.append(p);}
+      if(["admin","auditor"].includes(identity?.role)&&row.status==="pending"&&row.created_by!==identity.account_id&&!row.reviews.some(r=>r.reviewer_id===identity.account_id)){for(const decision of ["approve","reject"]){const button=document.createElement("button");button.type="button";button.textContent=decision==="approve"?"Approuver la revue":"Rejeter";button.addEventListener("click",()=>run(async()=>{if(!window.confirm("Confirmer cette décision interne ? Aucun paiement ne sera exécuté."))return;await api(payoutBase+"/"+encodeURIComponent(row.id)+"/reviews","POST",{decision},true);if(!token)return;await loadPayouts();notice("Décision enregistrée.");}));item.append(button);}}list.append(item);}
+    if(!rows.length){const p=document.createElement("p");p.textContent="Aucun ordre sur cette page.";list.append(p);}
+    el("payout-prev").disabled=payoutOffset===0;el("payout-next").disabled=rows.length<20;el("payout-page").textContent="Page "+(payoutOffset/20+1);
+  }
+  el("payout-refresh").addEventListener("click",()=>run(()=>loadPayouts()));
+  el("payout-prev").addEventListener("click",()=>run(()=>loadPayouts(Math.max(0,payoutOffset-20))));
+  el("payout-next").addEventListener("click",()=>run(()=>loadPayouts(payoutOffset+20)));
+  action("payout-form",async()=>{await api(payoutBase,"POST",{distribution_id:el("payout-distribution").value.trim(),artist_id:el("payout-artist").value.trim(),channel:el("payout-channel").value},true);if(!token)return;el("payout-form").reset();await loadPayouts(0);notice("Ordre préparé, aucun transfert effectué.");});
   el("saved").addEventListener("change",()=>el("finish").disabled=!el("saved").checked);
   el("finish").addEventListener("click",()=>{clearSession();show("login");notice("MFA activé. Reconnectez-vous avec un nouveau code TOTP.");});
   el("open-invite").addEventListener("click",()=>{if(!busy)show("invite");});
