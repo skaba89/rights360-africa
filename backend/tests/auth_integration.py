@@ -326,6 +326,24 @@ def main():
             assert client.post(field_url,headers=headers,json={**visit_data,"notes":"Changed"}).status_code==409
             assert len(client.get(field_url,headers=headers).json())==1
             assert client.get(field_url+"/operators",headers=headers).json()[0]["id"]==operator_id
+            media_url="/api/v1/media-observations"
+            assert client.get(media_url,headers=headers).status_code==403
+            with admin.begin() as conn:
+                conn.execute(text("INSERT INTO module_entitlements(organization_id,module_key,granted) VALUES (:org,'media',true)"),{"org":org_a})
+            assert client.put("/api/v1/organization/modules/media",headers=headers,json={"enabled":True}).status_code==200
+            media_data={"operator_id":operator_id,"external_reference":"broadcast-001","aired_at":"2026-01-01T10:00:00Z","duration_seconds":180,"reported_title":work.json()["title"],"reported_artist":"Test artist"}
+            assert client.post(media_url,headers=headers,json={**media_data,"operator_id":str(foreign_operator)}).status_code==404
+            observed=client.post(media_url,headers=headers,json=media_data)
+            assert observed.status_code==201,observed.text
+            assert client.post(media_url,headers=headers,json=media_data).status_code==409
+            observation_url=media_url+"/"+observed.json()["id"]
+            candidates=client.get(observation_url+"/candidates",headers=headers).json()
+            assert candidates["verified_audio"] is False
+            assert work_id in [row["id"] for row in candidates["candidates"]]
+            assert client.post(observation_url+"/review",headers=headers,json={"decision":"matched","work_id":work_id}).status_code==201
+            assert client.post(observation_url+"/review",headers=headers,json={"decision":"unmatched"}).status_code==409
+            assert client.get(media_url,headers=headers).json()[0]["status"]=="matched"
+
 
 
 
@@ -420,6 +438,8 @@ def main():
             conn.execute(text("DELETE FROM royalty_invoices WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM tariffs WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM exploitation_licenses WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
+            conn.execute(text("DELETE FROM media_reviews WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
+            conn.execute(text("DELETE FROM media_observations WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM field_visits WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM operators WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM work_rights_shares WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
