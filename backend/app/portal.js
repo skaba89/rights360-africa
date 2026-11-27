@@ -72,7 +72,7 @@
   const tenantBase="/api/v1/organization";
   const roles={admin:"Administrateur",manager:"Gestionnaire",auditor:"Auditeur",artist:"Artiste"};
   function hideMemberInvitation(){el("member-invite-token").textContent="";el("member-invite-id").textContent="";el("member-invite-result").hidden=true;}
-  function resetInstitution(){resetPayouts();resetAccounting();resetDistribution();resetBilling();resetTariffs();resetLicenses();resetWorks();resetArtists();identity=null;memberOffset=0;hideMemberInvitation();for(const id of ["institution-name","institution-role","institution-module-list","member-list","member-page"])el(id).replaceChildren();el("institution-modules").hidden=true;el("institution-members").hidden=true;}
+  function resetInstitution(){resetField();resetPayouts();resetAccounting();resetDistribution();resetBilling();resetTariffs();resetLicenses();resetWorks();resetArtists();identity=null;memberOffset=0;hideMemberInvitation();for(const id of ["institution-name","institution-role","institution-module-list","member-list","member-page"])el(id).replaceChildren();el("institution-modules").hidden=true;el("institution-members").hidden=true;}
   async function loadInstitution(){
     const me=await api("/api/v1/auth/me","GET",undefined,true);if(!token)return;
     if(me.mfa_required){identity=null;show("mfa");return;}
@@ -92,6 +92,7 @@
     const list=el("institution-module-list");list.replaceChildren();
     const artistEnabled=rows.some(row=>row.module_key==="artists"&&row.enabled);
     if(!artistEnabled)resetArtists();
+    if(!rows.some(row=>row.module_key==="field_control"&&row.enabled))resetField();
     if(!rows.some(row=>row.module_key==="finance"&&row.enabled)){resetPayouts();resetAccounting();resetBilling();}
     if(!rows.some(row=>row.module_key==="royalties"&&row.enabled))resetDistribution();
     if(!rows.some(row=>row.module_key==="licenses"&&row.enabled)){resetTariffs();resetLicenses();}
@@ -99,7 +100,7 @@
     for(const row of rows){
       const item=document.createElement("article");item.className="tenant-card";
       const title=document.createElement("strong");title.textContent=modules[row.module_key]||row.module_key;item.append(title);
-      const status=document.createElement("p");status.textContent=row.enabled?(["artists","works","licenses","finance","royalties"].includes(row.module_key)?"Activé — registre disponible":"Activé — métier à développer"):row.entitled?"Autorisé, désactivé":"Licence non attribuée ou expirée";item.append(status);
+      const status=document.createElement("p");status.textContent=row.enabled?(["artists","works","licenses","finance","royalties","field_control"].includes(row.module_key)?"Activé — registre disponible":"Activé — métier à développer"):row.entitled?"Autorisé, désactivé":"Licence non attribuée ou expirée";item.append(status);
       if(admin&&(row.entitled||row.enabled)){const button=document.createElement("button");button.type="button";button.textContent=row.enabled?"Désactiver":"Activer";button.addEventListener("click",()=>run(async()=>{await api(tenantBase+"/modules/"+encodeURIComponent(row.module_key),"PUT",{enabled:!row.enabled},true);if(!token)return;await loadTenantModules(true);notice("Configuration enregistrée.");}));item.append(button);}
       if(row.module_key==="artists"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir le registre";open.addEventListener("click",()=>run(async()=>{resetArtists();el("artist-workspace").hidden=false;el("artist-form").hidden=!["admin","manager"].includes(identity?.role);await loadArtists(0);}));item.append(open);}
       if(row.module_key==="works"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir les œuvres";open.addEventListener("click",()=>run(async()=>{resetWorks();el("work-workspace").hidden=false;el("work-form").hidden=!["admin","manager"].includes(identity?.role);await loadWorks(0);}));item.append(open);}
@@ -109,6 +110,7 @@
       if(row.module_key==="royalties"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir les répartitions";open.addEventListener("click",()=>run(openDistribution));item.append(open);}
       if(row.module_key==="finance"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir le journal comptable";open.addEventListener("click",()=>run(openAccounting));item.append(open);}
       if(row.module_key==="finance"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ordres de reversement";open.addEventListener("click",()=>run(openPayouts));item.append(open);}
+      if(row.module_key==="field_control"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Contrôle terrain";open.addEventListener("click",()=>run(openField));item.append(open);}
       list.append(item);
     }
   }
@@ -355,6 +357,23 @@
   el("payout-prev").addEventListener("click",()=>run(()=>loadPayouts(Math.max(0,payoutOffset-20))));
   el("payout-next").addEventListener("click",()=>run(()=>loadPayouts(payoutOffset+20)));
   action("payout-form",async()=>{await api(payoutBase,"POST",{distribution_id:el("payout-distribution").value.trim(),artist_id:el("payout-artist").value.trim(),channel:el("payout-channel").value},true);if(!token)return;el("payout-form").reset();await loadPayouts(0);notice("Ordre préparé, aucun transfert effectué.");});
+
+  let fieldOffset=0,fieldQueue=[],fieldGeneration=0;
+  const fieldBase="/api/v1/field-visits";
+  function fieldQueueStatus(){el("field-queue-status").textContent=fieldQueue.length+" constat(s) en mémoire. Non conservés après fermeture, expiration ou déconnexion.";el("field-sync").hidden=!fieldQueue.length;el("field-discard").hidden=!fieldQueue.length;}
+  function resetField(){fieldGeneration++;fieldOffset=0;fieldQueue=[];el("field-workspace").hidden=true;el("field-list").replaceChildren();el("field-operators").replaceChildren();el("field-form").reset();el("field-search").reset();fieldQueueStatus();}
+  async function openField(){el("field-workspace").hidden=false;el("field-form").hidden=!["admin","manager"].includes(identity?.role);fieldQueueStatus();await loadFieldOperators();if(token)await loadField(0);}
+  async function loadFieldOperators(){const rows=await api(fieldBase+"/operators?limit=50&q="+encodeURIComponent(el("field-query").value),"GET",undefined,true);if(!token)return;const list=el("field-operators");list.replaceChildren();for(const row of rows){const button=document.createElement("button");button.type="button";button.textContent=row.name+" · "+row.reference;button.addEventListener("click",()=>{if(!busy)el("field-operator").value=row.id;});list.append(button);}}
+  async function loadField(nextOffset=fieldOffset){const rows=await api(fieldBase+"?limit=20&offset="+nextOffset,"GET",undefined,true);if(!token)return;fieldOffset=nextOffset;const list=el("field-list");list.replaceChildren();for(const row of rows){const item=document.createElement("article");item.className="tenant-card";const title=document.createElement("strong");title.textContent=row.finding+" · "+row.visited_at;item.append(title);for(const value of ["Exploitant : "+row.operator_id,row.notes,"Licences à la réception : "+row.license_snapshot.records.length+(row.license_snapshot.truncated?" (liste tronquée)":""),row.latitude_e6===null?"Position non fournie":"Position : "+row.latitude_e6/1000000+", "+row.longitude_e6/1000000]){const p=document.createElement("p");p.textContent=value;item.append(p);}for(const lic of row.license_snapshot.records){const p=document.createElement("p");p.textContent=lic.reference+" · "+lic.status+" · "+lic.starts_on+" — "+lic.ends_on;item.append(p);}list.append(item);}el("field-prev").disabled=fieldOffset===0;el("field-next").disabled=rows.length<20;el("field-page").textContent="Page "+(fieldOffset/20+1);}
+  async function syncField(){const generation=fieldGeneration;while(token&&fieldQueue.length&&generation===fieldGeneration){const pending=fieldQueue[0];await api(fieldBase,"POST",pending,true);if(!token||generation!==fieldGeneration)return;fieldQueue.shift();fieldQueueStatus();}if(token&&generation===fieldGeneration)await loadField(0);}
+  el("field-location").addEventListener("click",()=>{if(!navigator.geolocation){notice("Géolocalisation indisponible.",true);return;}const generation=fieldGeneration;navigator.geolocation.getCurrentPosition(position=>{if(!token||generation!==fieldGeneration)return;el("field-lat").value=position.coords.latitude.toFixed(6);el("field-lon").value=position.coords.longitude.toFixed(6);},()=>{if(token&&generation===fieldGeneration)notice("Position non obtenue.",true);},{enableHighAccuracy:true,timeout:10000,maximumAge:0});});
+  el("field-refresh").addEventListener("click",()=>run(()=>loadField()));
+  el("field-prev").addEventListener("click",()=>run(()=>loadField(Math.max(0,fieldOffset-20))));
+  el("field-next").addEventListener("click",()=>run(()=>loadField(fieldOffset+20)));
+  el("field-sync").addEventListener("click",()=>run(syncField));
+  el("field-discard").addEventListener("click",()=>{if(!busy&&window.confirm("Effacer les constats non synchronisés ?")){fieldQueue=[];fieldQueueStatus();}});
+  action("field-search",loadFieldOperators);
+  action("field-form",async()=>{if(fieldQueue.length>=50)throw new Error("File pleine : synchroniser avant de poursuivre.");const lat=el("field-lat").value,lon=el("field-lon").value;if(Boolean(lat)!==Boolean(lon))throw new Error("Renseigner les deux coordonnées ou aucune.");const data={id:crypto.randomUUID(),operator_id:el("field-operator").value.trim(),visited_at:new Date(el("field-date").value).toISOString(),latitude_e6:lat?Math.round(Number(lat)*1000000):null,longitude_e6:lon?Math.round(Number(lon)*1000000):null,finding:el("field-finding").value,notes:el("field-notes").value};fieldQueue.push(data);el("field-form").reset();fieldQueueStatus();if(navigator.onLine)await syncField();else notice("Constat en mémoire uniquement. Synchroniser avant de fermer la page.");});
   el("saved").addEventListener("change",()=>el("finish").disabled=!el("saved").checked);
   el("finish").addEventListener("click",()=>{clearSession();show("login");notice("MFA activé. Reconnectez-vous avec un nouveau code TOTP.");});
   el("open-invite").addEventListener("click",()=>{if(!busy)show("invite");});
