@@ -340,3 +340,28 @@ class FieldVisit(Base):
     payload_hash: Mapped[str] = mapped_column(String(64),nullable=False)
     license_snapshot: Mapped[dict] = mapped_column(JSON,nullable=False)
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False,server_default=func.now())
+
+class MediaObservation(Base):
+    __tablename__ = "media_observations"
+    __table_args__ = (ForeignKeyConstraint(["organization_id","operator_id"],["operators.organization_id","operators.id"]),UniqueConstraint("organization_id","id",name="media_org_id_unique"),UniqueConstraint("organization_id","operator_id","external_reference",name="media_reference_unique"),CheckConstraint("duration_seconds BETWEEN 1 AND 86400",name="media_duration_valid"),Index("ix_media_org_aired","organization_id","aired_at"))
+    id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    operator_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    external_reference: Mapped[str] = mapped_column(String(100),nullable=False)
+    aired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False)
+    duration_seconds: Mapped[int] = mapped_column(Integer,nullable=False)
+    reported_title: Mapped[str] = mapped_column(String(250),nullable=False)
+    reported_artist: Mapped[str] = mapped_column(String(200),nullable=False)
+    fingerprint_sha256: Mapped[str | None] = mapped_column(String(64))
+    created_by: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False,server_default=func.now())
+
+class MediaReview(Base):
+    __tablename__ = "media_reviews"
+    __table_args__ = (ForeignKeyConstraint(["organization_id","observation_id"],["media_observations.organization_id","media_observations.id"]),ForeignKeyConstraint(["organization_id","work_id"],["works.organization_id","works.id"]),CheckConstraint("(decision='matched' AND work_id IS NOT NULL) OR (decision='unmatched' AND work_id IS NULL)",name="media_review_valid"))
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
+    observation_id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
+    work_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    decision: Mapped[str] = mapped_column(String(20),nullable=False)
+    reviewed_by: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False,server_default=func.now())
