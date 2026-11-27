@@ -69,3 +69,10 @@ class MFARecoveryCode(Base):
     __tablename__ = "mfa_recovery_codes"
     account_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True)
     code_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+
+class PlatformAdmin(Base):
+    __tablename__ = "platform_admins"
+    __table_args__ = (ForeignKeyConstraint(["account_id","organization_id"], ["memberships.account_id","memberships.organization_id"], ondelete="CASCADE"),)
+    account_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=true())

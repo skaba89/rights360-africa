@@ -47,6 +47,15 @@ def main():
             assert response.json()["mfa_required"] is False
             headers = {"Authorization":"Bearer "+response.json()["access_token"]}
             assert client.get("/api/v1/organization",headers=headers).json()["id"] == str(org_a)
+            assert client.get("/api/v1/platform/me",headers=headers).status_code == 403
+            with admin.begin() as conn:
+                conn.execute(text("INSERT INTO platform_admins(account_id,organization_id) VALUES (:id,:org)"), {"id":account,"org":org_a})
+            platform = client.get("/api/v1/platform/me",headers=headers)
+            assert platform.status_code == 200
+            assert platform.json()["platform_role"] == "super_admin"
+            with admin.begin() as conn:
+                conn.execute(text("UPDATE platform_admins SET active=false WHERE account_id=:id"), {"id":account})
+            assert client.get("/api/v1/platform/me",headers=headers).status_code == 403
             assert client.put("/api/v1/organization/modules/artists",headers=headers,json={"enabled":True}).status_code == 200
             assert client.put("/api/v1/organization/modules/unknown",headers=headers,json={"enabled":True}).status_code == 404
             with admin.begin() as conn:

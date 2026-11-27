@@ -8,6 +8,8 @@ app = FastAPI(title="Rights360 Africa", version="0.1.0")
 app.include_router(auth_router)
 from app.organization import router as organization_router
 app.include_router(organization_router)
+from app.platform_admin import router as platform_router
+app.include_router(platform_router)
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def home():
