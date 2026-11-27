@@ -343,6 +343,23 @@ def main():
             assert client.post(observation_url+"/review",headers=headers,json={"decision":"matched","work_id":work_id}).status_code==201
             assert client.post(observation_url+"/review",headers=headers,json={"decision":"unmatched"}).status_code==409
             assert client.get(media_url,headers=headers).json()[0]["status"]=="matched"
+            import io,math,wave,struct
+            audio_buffer=io.BytesIO()
+            with wave.open(audio_buffer,"wb") as wav:
+                wav.setparams((1,2,8000,0,"NONE","not compressed"))
+                wav.writeframes(struct.pack("<24000h",*(int(12000*math.sin(2*math.pi*400*i/8000)) for i in range(24000))))
+            audio=audio_buffer.getvalue()
+            audio_headers={**headers,"Content-Type":"audio/wav"}
+            acoustic_url="/api/v1/acoustic"
+            enrolled=client.post(acoustic_url+"/references/"+work_id,headers=audio_headers,content=audio)
+            assert enrolled.status_code==201,enrolled.text
+            assert client.post(acoustic_url+"/references/"+work_id,headers=audio_headers,content=audio).status_code==409
+            matched=client.post(acoustic_url+"/match",headers=audio_headers,content=audio)
+            assert matched.status_code==200,matched.text
+            assert matched.json()["human_review_required"] is True
+            assert matched.json()["candidates"][0]["work_id"]==work_id
+            assert matched.json()["candidates"][0]["similarity"]>0.99
+
             analytics_url="/api/v1/analytics/summary"
             assert client.get(analytics_url,headers=headers).status_code==403
             with admin.begin() as conn:
@@ -479,6 +496,7 @@ def main():
             conn.execute(text("DELETE FROM royalty_invoices WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM tariffs WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM exploitation_licenses WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
+            conn.execute(text("DELETE FROM acoustic_references WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM media_reviews WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM media_observations WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM field_visits WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
