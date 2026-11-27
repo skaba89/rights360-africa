@@ -82,3 +82,36 @@ def change_status(organization_id: UUID, payload: OrganizationStatus, token=Depe
     if not found:
         raise HTTPException(status_code=404,detail="Organization not found")
     return {"id":organization_id,"active":payload.active}
+
+from datetime import datetime, timezone
+from app.organization import MODULES
+
+class EntitlementUpdate(BaseModel):
+    granted: StrictBool
+    expires_at: datetime | None = None
+
+@router.get("/organizations/{organization_id}/entitlements")
+def list_entitlements(organization_id: UUID, response: Response, token=Depends(platform_token), identity=Depends(require_platform_admin)):
+    try:
+        with get_engine().connect() as conn:
+            rows=conn.execute(text("SELECT * FROM public.platform_list_entitlements(:token,:org)"),{"token":token,"org":organization_id}).mappings().all()
+    except (IntegrityError,ProgrammingError) as exc:
+        translate_db_error(exc)
+    response.headers["Cache-Control"]="no-store"
+    return [dict(row) for row in rows]
+
+@router.put("/organizations/{organization_id}/entitlements/{module_key}")
+def set_entitlement(organization_id: UUID,module_key: str,payload: EntitlementUpdate,token=Depends(platform_token),identity=Depends(require_platform_admin)):
+    if module_key not in MODULES:
+        raise HTTPException(status_code=404,detail="Unknown module")
+    expiry=payload.expires_at
+    if expiry is not None and (expiry.utcoffset() is None or (payload.granted and expiry<=datetime.now(timezone.utc))):
+        raise HTTPException(status_code=422,detail="Invalid expiry")
+    try:
+        with get_engine().begin() as conn:
+            found=conn.execute(text("SELECT public.platform_set_entitlement(:token,:org,:key,:granted,CAST(:expiry AS timestamptz))"),{"token":token,"org":organization_id,"key":module_key,"granted":payload.granted,"expiry":expiry}).scalar_one()
+    except (IntegrityError,ProgrammingError) as exc:
+        translate_db_error(exc)
+    if not found:
+        raise HTTPException(status_code=404,detail="Active organization not found")
+    return {"module_key":module_key,"granted":payload.granted,"expires_at":expiry}
