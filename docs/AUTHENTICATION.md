@@ -1,0 +1,4 @@
+# Development authentication
+Initial API uses short-lived opaque random bearer tokens with SHA-256 digests stored in PostgreSQL, immediate logout, Argon2id passwords, and live membership checks. No JWT or refresh tokens yet. No public signup. Bootstrap creates only a new organization and its first administrator using a privileged one-off CLI with interactive password input.
+Identity tables are cross-tenant authentication infrastructure, accessible to the trusted runtime role, not public endpoints. Do not expose arbitrary SQL or account listings. Tenant business access must derive context from current_identity, not caller-provided IDs.
+Before production: isolate identity database privileges further, add rate limiting, MFA, audit, account recovery, session rotation, TLS and verified integration tests. No real accounts or sensitive data until reviewed.
