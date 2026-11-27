@@ -343,6 +343,25 @@ def main():
             assert client.post(observation_url+"/review",headers=headers,json={"decision":"matched","work_id":work_id}).status_code==201
             assert client.post(observation_url+"/review",headers=headers,json={"decision":"unmatched"}).status_code==409
             assert client.get(media_url,headers=headers).json()[0]["status"]=="matched"
+            analytics_url="/api/v1/analytics/summary"
+            assert client.get(analytics_url,headers=headers).status_code==403
+            with admin.begin() as conn:
+                conn.execute(text("INSERT INTO module_entitlements(organization_id,module_key,granted) VALUES (:org,'analytics',true)"),{"org":org_a})
+            assert client.put("/api/v1/organization/modules/analytics",headers=headers,json={"enabled":True}).status_code==200
+            summary=client.get(analytics_url,headers=headers)
+            assert summary.status_code==200,summary.text
+            sections=summary.json()["sections"]
+            assert sections["artists"]["total"]==1
+            assert sections["works"]["registered"]==1
+            assert sections["licenses"]["operators"]==1
+            assert sections["finance"]["currencies"][0]["billed_minor"]=="50000"
+            assert sections["finance"]["currencies"][0]["received_minor"]=="50000"
+            assert sections["finance"]["currencies"][0]["outstanding_minor"]=="0"
+            assert sections["media"]["matched"]==1
+            assert sections["field_control"]["visits"]==1
+            assert client.put("/api/v1/organization/modules/media",headers=headers,json={"enabled":False}).status_code==200
+            assert "media" not in client.get(analytics_url,headers=headers).json()["sections"]
+
 
 
 

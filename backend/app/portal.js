@@ -72,7 +72,7 @@
   const tenantBase="/api/v1/organization";
   const roles={admin:"Administrateur",manager:"Gestionnaire",auditor:"Auditeur",artist:"Artiste"};
   function hideMemberInvitation(){el("member-invite-token").textContent="";el("member-invite-id").textContent="";el("member-invite-result").hidden=true;}
-  function resetInstitution(){resetMedia();resetField();resetPayouts();resetAccounting();resetDistribution();resetBilling();resetTariffs();resetLicenses();resetWorks();resetArtists();identity=null;memberOffset=0;hideMemberInvitation();for(const id of ["institution-name","institution-role","institution-module-list","member-list","member-page"])el(id).replaceChildren();el("institution-modules").hidden=true;el("institution-members").hidden=true;}
+  function resetInstitution(){resetAnalytics();resetMedia();resetField();resetPayouts();resetAccounting();resetDistribution();resetBilling();resetTariffs();resetLicenses();resetWorks();resetArtists();identity=null;memberOffset=0;hideMemberInvitation();for(const id of ["institution-name","institution-role","institution-module-list","member-list","member-page"])el(id).replaceChildren();el("institution-modules").hidden=true;el("institution-members").hidden=true;}
   async function loadInstitution(){
     const me=await api("/api/v1/auth/me","GET",undefined,true);if(!token)return;
     if(me.mfa_required){identity=null;show("mfa");return;}
@@ -92,6 +92,7 @@
     const list=el("institution-module-list");list.replaceChildren();
     const artistEnabled=rows.some(row=>row.module_key==="artists"&&row.enabled);
     if(!artistEnabled)resetArtists();
+    if(!rows.some(row=>row.module_key==="analytics"&&row.enabled))resetAnalytics();
     if(!rows.some(row=>row.module_key==="media"&&row.enabled))resetMedia();
     if(!rows.some(row=>row.module_key==="field_control"&&row.enabled))resetField();
     if(!rows.some(row=>row.module_key==="finance"&&row.enabled)){resetPayouts();resetAccounting();resetBilling();}
@@ -101,7 +102,7 @@
     for(const row of rows){
       const item=document.createElement("article");item.className="tenant-card";
       const title=document.createElement("strong");title.textContent=modules[row.module_key]||row.module_key;item.append(title);
-      const status=document.createElement("p");status.textContent=row.enabled?(["artists","works","licenses","finance","royalties","field_control","media"].includes(row.module_key)?"Activé — registre disponible":"Activé — métier à développer"):row.entitled?"Autorisé, désactivé":"Licence non attribuée ou expirée";item.append(status);
+      const status=document.createElement("p");status.textContent=row.enabled?(["artists","works","licenses","finance","royalties","field_control","media","analytics"].includes(row.module_key)?"Activé — registre disponible":"Activé — métier à développer"):row.entitled?"Autorisé, désactivé":"Licence non attribuée ou expirée";item.append(status);
       if(admin&&(row.entitled||row.enabled)){const button=document.createElement("button");button.type="button";button.textContent=row.enabled?"Désactiver":"Activer";button.addEventListener("click",()=>run(async()=>{await api(tenantBase+"/modules/"+encodeURIComponent(row.module_key),"PUT",{enabled:!row.enabled},true);if(!token)return;await loadTenantModules(true);notice("Configuration enregistrée.");}));item.append(button);}
       if(row.module_key==="artists"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir le registre";open.addEventListener("click",()=>run(async()=>{resetArtists();el("artist-workspace").hidden=false;el("artist-form").hidden=!["admin","manager"].includes(identity?.role);await loadArtists(0);}));item.append(open);}
       if(row.module_key==="works"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir les œuvres";open.addEventListener("click",()=>run(async()=>{resetWorks();el("work-workspace").hidden=false;el("work-form").hidden=!["admin","manager"].includes(identity?.role);await loadWorks(0);}));item.append(open);}
@@ -113,6 +114,7 @@
       if(row.module_key==="finance"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ordres de reversement";open.addEventListener("click",()=>run(openPayouts));item.append(open);}
       if(row.module_key==="field_control"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Contrôle terrain";open.addEventListener("click",()=>run(openField));item.append(open);}
       if(row.module_key==="media"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Media Intelligence";open.addEventListener("click",()=>run(openMedia));item.append(open);}
+      if(row.module_key==="analytics"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Tableau de bord décisionnel";open.addEventListener("click",()=>run(openAnalytics));item.append(open);}
       list.append(item);
     }
   }
@@ -392,6 +394,14 @@
   el("media-next").addEventListener("click",()=>run(()=>loadMedia(mediaOffset+20)));
   action("media-form",async()=>{await api(mediaBase,"POST",{operator_id:el("media-operator").value.trim(),external_reference:el("media-ref").value,aired_at:new Date(el("media-date").value).toISOString(),duration_seconds:Number(el("media-duration").value),reported_title:el("media-title").value,reported_artist:el("media-artist").value},true);if(!token)return;el("media-form").reset();await loadMedia(0);notice("Relevé enregistré.");});
   action("media-review",async()=>{if(!mediaSelected)return;const decision=el("media-decision").value;await api(mediaBase+"/"+encodeURIComponent(mediaSelected.id)+"/review","POST",{decision,work_id:decision==="matched"?el("media-work").value.trim():null},true);if(!token)return;mediaSelected=null;el("media-review").hidden=true;el("media-candidates").replaceChildren();await loadMedia();notice("Décision enregistrée.");});
+
+  const analyticsNames={artists:"Artistes",works:"Œuvres",licenses:"Exploitants et licences",field_control:"Contrôle terrain",media:"Diffusions",finance:"Recouvrement",royalties:"Répartitions"};
+  const metricNames={total:"Total",active:"Actifs",registered:"Enregistrées",operators:"Exploitants",licenses:"Licences",effective:"En vigueur",visits:"Visites",suspected:"Non-conformités présumées",observations:"Diffusions",matched:"Rapprochées",unmatched:"Non identifiées",pending:"En attente",invoices:"Créances",billed_minor:"Facturé",received_minor:"Encaissé déclaré",outstanding_minor:"Solde",overdue_minor:"En retard",distributions:"Répartitions",gross_minor:"Brut",commission_minor:"Commissions",net_minor:"Net"};
+  function resetAnalytics(){el("analytics-workspace").hidden=true;el("analytics-sections").replaceChildren();el("analytics-asof").textContent="";}
+  async function openAnalytics(){resetAnalytics();el("analytics-workspace").hidden=false;await loadAnalytics();}
+  function addMetric(parent,key,value){const p=document.createElement("p");p.textContent=(metricNames[key]||key)+" : "+String(value);parent.append(p);}
+  async function loadAnalytics(){const result=await api("/api/v1/analytics/summary","GET",undefined,true);if(!token)return;el("analytics-asof").textContent="Actualisation : "+result.as_of+" — lectures successives";const list=el("analytics-sections");list.replaceChildren();for(const [key,data] of Object.entries(result.sections)){const item=document.createElement("article");item.className="tenant-card";const heading=document.createElement("h4");heading.textContent=analyticsNames[key]||key;item.append(heading);if(data.currencies){for(const currency of data.currencies){const title=document.createElement("strong");title.textContent=currency.currency+" — montants en unités minimales";item.append(title);for(const [k,v] of Object.entries(currency))if(k!=="currency")addMetric(item,k,v);}if(!data.currencies.length){const p=document.createElement("p");p.textContent="Aucune opération.";item.append(p);}}else for(const [k,v] of Object.entries(data))addMetric(item,k,v);list.append(item);}if(!Object.keys(result.sections).length){const p=document.createElement("p");p.textContent="Aucun module métier actif.";list.append(p);}}
+  el("analytics-refresh").addEventListener("click",()=>run(loadAnalytics));
   el("saved").addEventListener("change",()=>el("finish").disabled=!el("saved").checked);
   el("finish").addEventListener("click",()=>{clearSession();show("login");notice("MFA activé. Reconnectez-vous avec un nouveau code TOTP.");});
   el("open-invite").addEventListener("click",()=>{if(!busy)show("invite");});
