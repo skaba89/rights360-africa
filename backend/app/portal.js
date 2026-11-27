@@ -72,7 +72,7 @@
   const tenantBase="/api/v1/organization";
   const roles={admin:"Administrateur",manager:"Gestionnaire",auditor:"Auditeur",artist:"Artiste"};
   function hideMemberInvitation(){el("member-invite-token").textContent="";el("member-invite-id").textContent="";el("member-invite-result").hidden=true;}
-  function resetInstitution(){resetField();resetPayouts();resetAccounting();resetDistribution();resetBilling();resetTariffs();resetLicenses();resetWorks();resetArtists();identity=null;memberOffset=0;hideMemberInvitation();for(const id of ["institution-name","institution-role","institution-module-list","member-list","member-page"])el(id).replaceChildren();el("institution-modules").hidden=true;el("institution-members").hidden=true;}
+  function resetInstitution(){resetMedia();resetField();resetPayouts();resetAccounting();resetDistribution();resetBilling();resetTariffs();resetLicenses();resetWorks();resetArtists();identity=null;memberOffset=0;hideMemberInvitation();for(const id of ["institution-name","institution-role","institution-module-list","member-list","member-page"])el(id).replaceChildren();el("institution-modules").hidden=true;el("institution-members").hidden=true;}
   async function loadInstitution(){
     const me=await api("/api/v1/auth/me","GET",undefined,true);if(!token)return;
     if(me.mfa_required){identity=null;show("mfa");return;}
@@ -92,6 +92,7 @@
     const list=el("institution-module-list");list.replaceChildren();
     const artistEnabled=rows.some(row=>row.module_key==="artists"&&row.enabled);
     if(!artistEnabled)resetArtists();
+    if(!rows.some(row=>row.module_key==="media"&&row.enabled))resetMedia();
     if(!rows.some(row=>row.module_key==="field_control"&&row.enabled))resetField();
     if(!rows.some(row=>row.module_key==="finance"&&row.enabled)){resetPayouts();resetAccounting();resetBilling();}
     if(!rows.some(row=>row.module_key==="royalties"&&row.enabled))resetDistribution();
@@ -100,7 +101,7 @@
     for(const row of rows){
       const item=document.createElement("article");item.className="tenant-card";
       const title=document.createElement("strong");title.textContent=modules[row.module_key]||row.module_key;item.append(title);
-      const status=document.createElement("p");status.textContent=row.enabled?(["artists","works","licenses","finance","royalties","field_control"].includes(row.module_key)?"Activé — registre disponible":"Activé — métier à développer"):row.entitled?"Autorisé, désactivé":"Licence non attribuée ou expirée";item.append(status);
+      const status=document.createElement("p");status.textContent=row.enabled?(["artists","works","licenses","finance","royalties","field_control","media"].includes(row.module_key)?"Activé — registre disponible":"Activé — métier à développer"):row.entitled?"Autorisé, désactivé":"Licence non attribuée ou expirée";item.append(status);
       if(admin&&(row.entitled||row.enabled)){const button=document.createElement("button");button.type="button";button.textContent=row.enabled?"Désactiver":"Activer";button.addEventListener("click",()=>run(async()=>{await api(tenantBase+"/modules/"+encodeURIComponent(row.module_key),"PUT",{enabled:!row.enabled},true);if(!token)return;await loadTenantModules(true);notice("Configuration enregistrée.");}));item.append(button);}
       if(row.module_key==="artists"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir le registre";open.addEventListener("click",()=>run(async()=>{resetArtists();el("artist-workspace").hidden=false;el("artist-form").hidden=!["admin","manager"].includes(identity?.role);await loadArtists(0);}));item.append(open);}
       if(row.module_key==="works"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir les œuvres";open.addEventListener("click",()=>run(async()=>{resetWorks();el("work-workspace").hidden=false;el("work-form").hidden=!["admin","manager"].includes(identity?.role);await loadWorks(0);}));item.append(open);}
@@ -111,6 +112,7 @@
       if(row.module_key==="finance"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir le journal comptable";open.addEventListener("click",()=>run(openAccounting));item.append(open);}
       if(row.module_key==="finance"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ordres de reversement";open.addEventListener("click",()=>run(openPayouts));item.append(open);}
       if(row.module_key==="field_control"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Contrôle terrain";open.addEventListener("click",()=>run(openField));item.append(open);}
+      if(row.module_key==="media"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Media Intelligence";open.addEventListener("click",()=>run(openMedia));item.append(open);}
       list.append(item);
     }
   }
@@ -374,6 +376,22 @@
   el("field-discard").addEventListener("click",()=>{if(!busy&&window.confirm("Effacer les constats non synchronisés ?")){fieldQueue=[];fieldQueueStatus();}});
   action("field-search",loadFieldOperators);
   action("field-form",async()=>{if(fieldQueue.length>=50)throw new Error("File pleine : synchroniser avant de poursuivre.");const lat=el("field-lat").value,lon=el("field-lon").value;if(Boolean(lat)!==Boolean(lon))throw new Error("Renseigner les deux coordonnées ou aucune.");const data={id:crypto.randomUUID(),operator_id:el("field-operator").value.trim(),visited_at:new Date(el("field-date").value).toISOString(),latitude_e6:lat?Math.round(Number(lat)*1000000):null,longitude_e6:lon?Math.round(Number(lon)*1000000):null,finding:el("field-finding").value,notes:el("field-notes").value};fieldQueue.push(data);el("field-form").reset();fieldQueueStatus();if(navigator.onLine)await syncField();else notice("Constat en mémoire uniquement. Synchroniser avant de fermer la page.");});
+
+  let mediaOffset=0,mediaSelected=null;
+  const mediaBase="/api/v1/media-observations";
+  function resetMedia(){mediaOffset=0;mediaSelected=null;el("media-workspace").hidden=true;el("media-list").replaceChildren();el("media-candidates").replaceChildren();el("media-review").hidden=true;el("media-form").reset();el("media-review").reset();}
+  async function openMedia(){resetMedia();el("media-workspace").hidden=false;el("media-form").hidden=!["admin","manager"].includes(identity?.role);await loadMedia(0);}
+  async function loadMedia(nextOffset=mediaOffset){const rows=await api(mediaBase+"?limit=20&offset="+nextOffset,"GET",undefined,true);if(!token)return;mediaOffset=nextOffset;const list=el("media-list");list.replaceChildren();
+    for(const row of rows){const item=document.createElement("article");item.className="tenant-card";const title=document.createElement("strong");title.textContent=row.reported_title+" — "+row.reported_artist;item.append(title);for(const value of [row.external_reference,row.aired_at+" · "+row.duration_seconds+" s",({pending:"À vérifier",matched:"Correspondance retenue",unmatched:"Non identifié"})[row.status],row.work_id?"Œuvre : "+row.work_id:""]){if(!value)continue;const p=document.createElement("p");p.textContent=value;item.append(p);}
+    if(row.status==="pending"){const button=document.createElement("button");button.type="button";button.textContent="Rechercher dans le catalogue";button.addEventListener("click",()=>run(()=>loadMediaCandidates(row)));item.append(button);}list.append(item);}
+    if(!rows.length){const p=document.createElement("p");p.textContent="Aucun relevé sur cette page.";list.append(p);}el("media-prev").disabled=mediaOffset===0;el("media-next").disabled=rows.length<20;el("media-page").textContent="Page "+(mediaOffset/20+1);
+  }
+  async function loadMediaCandidates(row){mediaSelected=null;el("media-review").hidden=true;el("media-candidates").replaceChildren();const result=await api(mediaBase+"/"+encodeURIComponent(row.id)+"/candidates","GET",undefined,true);if(!token)return;mediaSelected=row;const list=el("media-candidates");const heading=document.createElement("p");heading.textContent="Suggestions par titre exact : "+row.reported_title+" (audio non vérifié)";list.append(heading);for(const candidate of result.candidates){const button=document.createElement("button");button.type="button";button.textContent=candidate.title+" · "+candidate.id;button.addEventListener("click",()=>{if(!busy){el("media-work").value=candidate.id;el("media-decision").value="matched";}});list.append(button);}el("media-review").reset();el("media-review").hidden=identity?.role!=="admin";}
+  el("media-refresh").addEventListener("click",()=>run(()=>loadMedia()));
+  el("media-prev").addEventListener("click",()=>run(()=>loadMedia(Math.max(0,mediaOffset-20))));
+  el("media-next").addEventListener("click",()=>run(()=>loadMedia(mediaOffset+20)));
+  action("media-form",async()=>{await api(mediaBase,"POST",{operator_id:el("media-operator").value.trim(),external_reference:el("media-ref").value,aired_at:new Date(el("media-date").value).toISOString(),duration_seconds:Number(el("media-duration").value),reported_title:el("media-title").value,reported_artist:el("media-artist").value},true);if(!token)return;el("media-form").reset();await loadMedia(0);notice("Relevé enregistré.");});
+  action("media-review",async()=>{if(!mediaSelected)return;const decision=el("media-decision").value;await api(mediaBase+"/"+encodeURIComponent(mediaSelected.id)+"/review","POST",{decision,work_id:decision==="matched"?el("media-work").value.trim():null},true);if(!token)return;mediaSelected=null;el("media-review").hidden=true;el("media-candidates").replaceChildren();await loadMedia();notice("Décision enregistrée.");});
   el("saved").addEventListener("change",()=>el("finish").disabled=!el("saved").checked);
   el("finish").addEventListener("click",()=>{clearSession();show("login");notice("MFA activé. Reconnectez-vous avec un nouveau code TOTP.");});
   el("open-invite").addEventListener("click",()=>{if(!busy)show("invite");});
