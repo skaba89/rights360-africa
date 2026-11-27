@@ -72,7 +72,7 @@
   const tenantBase="/api/v1/organization";
   const roles={admin:"Administrateur",manager:"Gestionnaire",auditor:"Auditeur",artist:"Artiste"};
   function hideMemberInvitation(){el("member-invite-token").textContent="";el("member-invite-id").textContent="";el("member-invite-result").hidden=true;}
-  function resetInstitution(){resetBilling();resetTariffs();resetLicenses();resetWorks();resetArtists();identity=null;memberOffset=0;hideMemberInvitation();for(const id of ["institution-name","institution-role","institution-module-list","member-list","member-page"])el(id).replaceChildren();el("institution-modules").hidden=true;el("institution-members").hidden=true;}
+  function resetInstitution(){resetDistribution();resetBilling();resetTariffs();resetLicenses();resetWorks();resetArtists();identity=null;memberOffset=0;hideMemberInvitation();for(const id of ["institution-name","institution-role","institution-module-list","member-list","member-page"])el(id).replaceChildren();el("institution-modules").hidden=true;el("institution-members").hidden=true;}
   async function loadInstitution(){
     const me=await api("/api/v1/auth/me","GET",undefined,true);if(!token)return;
     if(me.mfa_required){identity=null;show("mfa");return;}
@@ -93,18 +93,20 @@
     const artistEnabled=rows.some(row=>row.module_key==="artists"&&row.enabled);
     if(!artistEnabled)resetArtists();
     if(!rows.some(row=>row.module_key==="finance"&&row.enabled))resetBilling();
+    if(!rows.some(row=>row.module_key==="royalties"&&row.enabled))resetDistribution();
     if(!rows.some(row=>row.module_key==="licenses"&&row.enabled)){resetTariffs();resetLicenses();}
     if(!rows.some(row=>row.module_key==="works"&&row.enabled))resetWorks();
     for(const row of rows){
       const item=document.createElement("article");item.className="tenant-card";
       const title=document.createElement("strong");title.textContent=modules[row.module_key]||row.module_key;item.append(title);
-      const status=document.createElement("p");status.textContent=row.enabled?(["artists","works","licenses","finance"].includes(row.module_key)?"Activé — registre disponible":"Activé — métier à développer"):row.entitled?"Autorisé, désactivé":"Licence non attribuée ou expirée";item.append(status);
+      const status=document.createElement("p");status.textContent=row.enabled?(["artists","works","licenses","finance","royalties"].includes(row.module_key)?"Activé — registre disponible":"Activé — métier à développer"):row.entitled?"Autorisé, désactivé":"Licence non attribuée ou expirée";item.append(status);
       if(admin&&(row.entitled||row.enabled)){const button=document.createElement("button");button.type="button";button.textContent=row.enabled?"Désactiver":"Activer";button.addEventListener("click",()=>run(async()=>{await api(tenantBase+"/modules/"+encodeURIComponent(row.module_key),"PUT",{enabled:!row.enabled},true);if(!token)return;await loadTenantModules(true);notice("Configuration enregistrée.");}));item.append(button);}
       if(row.module_key==="artists"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir le registre";open.addEventListener("click",()=>run(async()=>{resetArtists();el("artist-workspace").hidden=false;el("artist-form").hidden=!["admin","manager"].includes(identity?.role);await loadArtists(0);}));item.append(open);}
       if(row.module_key==="works"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir les œuvres";open.addEventListener("click",()=>run(async()=>{resetWorks();el("work-workspace").hidden=false;el("work-form").hidden=!["admin","manager"].includes(identity?.role);await loadWorks(0);}));item.append(open);}
       if(row.module_key==="licenses"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir les licences";open.addEventListener("click",()=>run(openLicenses));item.append(open);}
       if(row.module_key==="licenses"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir les barèmes";open.addEventListener("click",()=>run(openTariffs));item.append(open);}
       if(row.module_key==="finance"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir la facturation";open.addEventListener("click",()=>run(openBilling));item.append(open);}
+      if(row.module_key==="royalties"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir les répartitions";open.addEventListener("click",()=>run(openDistribution));item.append(open);}
       list.append(item);
     }
   }
@@ -202,7 +204,7 @@
     el("rights-work-name").textContent=work.title;el("rights-workspace").hidden=false;
     const latest=history[0];rightsVersion=latest?.version||0;
     for(const declaration of history){
-      const item=document.createElement("article");item.className="tenant-card";const heading=document.createElement("strong");heading.textContent="Version "+declaration.version+" · "+(declaration.status==="complete"?"Complète":"Brouillon")+" · "+(declaration.total_basis_points/100).toFixed(2)+" %";item.append(heading);
+      const item=document.createElement("article");item.className="tenant-card";const heading=document.createElement("strong");heading.textContent="Version "+declaration.version+" · "+(declaration.status==="complete"?"Complète":"Brouillon")+" · "+(declaration.total_basis_points/100).toFixed(2)+" %";item.append(heading);const id=document.createElement("p");id.textContent="UUID : "+declaration.id;item.append(id);
       for(const share of declaration.shares){const p=document.createElement("p");p.textContent=share.artist_id+" · "+rightsRoles[share.role]+" · "+(share.basis_points/100).toFixed(2)+" %";item.append(p);}el("rights-history").append(item);
     }
     if(["admin","manager"].includes(identity?.role)){el("rights-form").hidden=false;el("rights-status").value=latest?.status||"draft";for(const share of latest?.shares||[{artist_id:work.primary_artist_id,role:"author"}])addRightsRow(share);}
@@ -279,7 +281,7 @@
   async function openReceipts(row){selectedInvoice=row;el("receipt-title").textContent="Encaissements · "+row.reference;el("receipt-workspace").hidden=false;el("receipt-form").hidden=identity?.role!=="admin";el("receipt-form").reset();
     const rows=await api(billingBase+"/"+encodeURIComponent(row.id)+"/receipts","GET",undefined,true);if(!token)return;
     const list=el("receipt-list");list.replaceChildren();
-    for(const receipt of rows){const p=document.createElement("p");p.textContent=receipt.reference+" · "+receipt.amount_minor+" "+row.currency+" · "+receipt.received_on;list.append(p);}
+    for(const receipt of rows){const p=document.createElement("p");p.textContent=receipt.reference+" · "+receipt.amount_minor+" "+row.currency+" · "+receipt.received_on+" · UUID : "+receipt.id;list.append(p);}
     if(!rows.length){const p=document.createElement("p");p.textContent="Aucun encaissement.";list.append(p);}
   }
   el("billing-refresh").addEventListener("click",()=>run(()=>loadBilling()));
@@ -287,6 +289,28 @@
   el("billing-next").addEventListener("click",()=>run(()=>loadBilling(billingOffset+20)));
   action("billing-form",async()=>{const data={reference:el("billing-ref").value,license_id:el("billing-license").value.trim(),tariff_id:el("billing-tariff").value.trim(),usage_date:el("billing-usage").value,due_on:el("billing-due").value};if(el("billing-quantity").value)data.quantity=Number(el("billing-quantity").value);if(el("billing-revenue").value)data.revenue_minor=Number(el("billing-revenue").value);if(!window.confirm("Émettre cette créance interne ?"))return;await api(billingBase,"POST",data,true);if(!token)return;el("billing-form").reset();await loadBilling(0);notice("Créance enregistrée.");});
   action("receipt-form",async()=>{if(!selectedInvoice)return;const row=selectedInvoice;const amount=Number(el("receipt-amount").value);if(!Number.isSafeInteger(amount)||amount<=0)throw new Error("Montant invalide.");if(!window.confirm("Confirmer un encaissement réellement reçu ?"))return;await api(billingBase+"/"+encodeURIComponent(row.id)+"/receipts","POST",{reference:el("receipt-ref").value,amount_minor:amount,received_on:el("receipt-date").value},true);if(!token)return;await openReceipts(row);await loadBilling();notice("Encaissement enregistré.");});
+
+  let distributionOffset=0;
+  const distributionBase="/api/v1/distributions";
+  function resetDistribution(){distributionOffset=0;el("distribution-workspace").hidden=true;el("distribution-list").replaceChildren();el("distribution-lines").replaceChildren();el("distribution-detail-title").textContent="";el("distribution-form").reset();}
+  async function openDistribution(){resetDistribution();el("distribution-workspace").hidden=false;el("distribution-form").hidden=identity?.role!=="admin";await loadDistributions(0);}
+  async function loadDistributions(nextOffset=distributionOffset){
+    const rows=await api(distributionBase+"?limit=20&offset="+nextOffset,"GET",undefined,true);if(!token)return;
+    distributionOffset=nextOffset;const list=el("distribution-list");list.replaceChildren();
+    for(const row of rows){const item=document.createElement("article");item.className="tenant-card";const title=document.createElement("strong");title.textContent="Répartition "+row.id;item.append(title);
+      for(const value of ["Brut : "+row.gross_minor+" "+row.currency,"Commission : "+row.commission_minor+" ("+row.commission_bps/100+" %)","Net : "+row.net_minor,"Encaissement : "+row.receipt_id]){const p=document.createElement("p");p.textContent=value;item.append(p);}
+      const button=document.createElement("button");button.type="button";button.textContent="Détail des ayants droit";button.addEventListener("click",()=>run(()=>loadDistributionLines(row)));item.append(button);list.append(item);}
+    if(!rows.length){const p=document.createElement("p");p.textContent="Aucune répartition sur cette page.";list.append(p);}
+    el("distribution-prev").disabled=distributionOffset===0;el("distribution-next").disabled=rows.length<20;el("distribution-page").textContent="Page "+(distributionOffset/20+1);
+  }
+  async function loadDistributionLines(row){const rows=await api(distributionBase+"/"+encodeURIComponent(row.id)+"/lines","GET",undefined,true);if(!token)return;
+    el("distribution-detail-title").textContent="Détail · "+row.id;const list=el("distribution-lines");list.replaceChildren();
+    for(const line of rows){const p=document.createElement("p");p.textContent=line.artist_id+" · "+line.role+" · "+line.basis_points/100+" % · "+line.amount_minor+" "+row.currency;list.append(p);}
+  }
+  el("distribution-refresh").addEventListener("click",()=>run(()=>loadDistributions()));
+  el("distribution-prev").addEventListener("click",()=>run(()=>loadDistributions(Math.max(0,distributionOffset-20))));
+  el("distribution-next").addEventListener("click",()=>run(()=>loadDistributions(distributionOffset+20)));
+  action("distribution-form",async()=>{const data={receipt_id:el("distribution-receipt").value.trim(),declaration_id:el("distribution-declaration").value.trim(),commission_bps:Number(el("distribution-commission").value)};if(!window.confirm("Enregistrer ce calcul interne ? Aucun paiement ne sera effectué."))return;const result=await api(distributionBase,"POST",data,true);if(!token)return;el("distribution-form").reset();await loadDistributions(0);await loadDistributionLines(result);notice("Calcul enregistré.");});
   el("saved").addEventListener("change",()=>el("finish").disabled=!el("saved").checked);
   el("finish").addEventListener("click",()=>{clearSession();show("login");notice("MFA activé. Reconnectez-vous avec un nouveau code TOTP.");});
   el("open-invite").addEventListener("click",()=>{if(!busy)show("invite");});
