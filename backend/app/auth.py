@@ -60,7 +60,7 @@ def login(payload: Login, response: Response, request: Request):
         valid = verify_password(account["password_hash"] if account else dummy_hash, payload.password)
         if not account or not valid:
             raise invalid()
-        conn.execute(text("SELECT id FROM accounts WHERE id=:id FOR UPDATE"), {"id":account["id"]})
+        conn.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(CAST(:id AS text), 360))"), {"id":account["id"]})
         enabled = conn.execute(text("SELECT enabled FROM account_mfa WHERE account_id=:id"), {"id":account["id"]}).scalar_one_or_none()
         if enabled and not consume_code(conn, account["id"], payload.otp):
             raise invalid()
@@ -90,7 +90,8 @@ class MFAConfirm(MFASetup):
     otp: str = Field(min_length=6,max_length=6)
 
 def lock_and_verify(conn, identity, password):
-    row = conn.execute(text("SELECT password_hash FROM accounts WHERE id=:id AND active FOR UPDATE"), {"id":identity["account_id"]}).scalar_one_or_none()
+    conn.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(CAST(:id AS text), 360))"), {"id":identity["account_id"]})
+    row = conn.execute(text("SELECT password_hash FROM accounts WHERE id=:id AND active"), {"id":identity["account_id"]}).scalar_one_or_none()
     if not row or not verify_password(row,password):
         raise invalid()
 
