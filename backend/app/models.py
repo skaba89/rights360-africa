@@ -12,6 +12,7 @@ class Organization(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     slug: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=true())
 
 class TenantModule(Base):
     __tablename__ = "tenant_modules"
@@ -76,3 +77,11 @@ class PlatformAdmin(Base):
     account_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True)
     organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=true())
+
+class PlatformAuditEvent(Base):
+    __tablename__ = "platform_audit_events"
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    actor_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    action: Mapped[str] = mapped_column(String(80), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
