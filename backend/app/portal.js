@@ -72,7 +72,7 @@
   const tenantBase="/api/v1/organization";
   const roles={admin:"Administrateur",manager:"Gestionnaire",auditor:"Auditeur",artist:"Artiste"};
   function hideMemberInvitation(){el("member-invite-token").textContent="";el("member-invite-id").textContent="";el("member-invite-result").hidden=true;}
-  function resetInstitution(){resetTariffs();resetLicenses();resetWorks();resetArtists();identity=null;memberOffset=0;hideMemberInvitation();for(const id of ["institution-name","institution-role","institution-module-list","member-list","member-page"])el(id).replaceChildren();el("institution-modules").hidden=true;el("institution-members").hidden=true;}
+  function resetInstitution(){resetBilling();resetTariffs();resetLicenses();resetWorks();resetArtists();identity=null;memberOffset=0;hideMemberInvitation();for(const id of ["institution-name","institution-role","institution-module-list","member-list","member-page"])el(id).replaceChildren();el("institution-modules").hidden=true;el("institution-members").hidden=true;}
   async function loadInstitution(){
     const me=await api("/api/v1/auth/me","GET",undefined,true);if(!token)return;
     if(me.mfa_required){identity=null;show("mfa");return;}
@@ -92,17 +92,19 @@
     const list=el("institution-module-list");list.replaceChildren();
     const artistEnabled=rows.some(row=>row.module_key==="artists"&&row.enabled);
     if(!artistEnabled)resetArtists();
+    if(!rows.some(row=>row.module_key==="finance"&&row.enabled))resetBilling();
     if(!rows.some(row=>row.module_key==="licenses"&&row.enabled)){resetTariffs();resetLicenses();}
     if(!rows.some(row=>row.module_key==="works"&&row.enabled))resetWorks();
     for(const row of rows){
       const item=document.createElement("article");item.className="tenant-card";
       const title=document.createElement("strong");title.textContent=modules[row.module_key]||row.module_key;item.append(title);
-      const status=document.createElement("p");status.textContent=row.enabled?(["artists","works","licenses"].includes(row.module_key)?"Activé — registre disponible":"Activé — métier à développer"):row.entitled?"Autorisé, désactivé":"Licence non attribuée ou expirée";item.append(status);
+      const status=document.createElement("p");status.textContent=row.enabled?(["artists","works","licenses","finance"].includes(row.module_key)?"Activé — registre disponible":"Activé — métier à développer"):row.entitled?"Autorisé, désactivé":"Licence non attribuée ou expirée";item.append(status);
       if(admin&&(row.entitled||row.enabled)){const button=document.createElement("button");button.type="button";button.textContent=row.enabled?"Désactiver":"Activer";button.addEventListener("click",()=>run(async()=>{await api(tenantBase+"/modules/"+encodeURIComponent(row.module_key),"PUT",{enabled:!row.enabled},true);if(!token)return;await loadTenantModules(true);notice("Configuration enregistrée.");}));item.append(button);}
       if(row.module_key==="artists"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir le registre";open.addEventListener("click",()=>run(async()=>{resetArtists();el("artist-workspace").hidden=false;el("artist-form").hidden=!["admin","manager"].includes(identity?.role);await loadArtists(0);}));item.append(open);}
       if(row.module_key==="works"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir les œuvres";open.addEventListener("click",()=>run(async()=>{resetWorks();el("work-workspace").hidden=false;el("work-form").hidden=!["admin","manager"].includes(identity?.role);await loadWorks(0);}));item.append(open);}
       if(row.module_key==="licenses"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir les licences";open.addEventListener("click",()=>run(openLicenses));item.append(open);}
       if(row.module_key==="licenses"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir les barèmes";open.addEventListener("click",()=>run(openTariffs));item.append(open);}
+      if(row.module_key==="finance"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir la facturation";open.addEventListener("click",()=>run(openBilling));item.append(open);}
       list.append(item);
     }
   }
@@ -259,6 +261,32 @@
   el("tariff-next").addEventListener("click",()=>run(()=>loadTariffs(tariffOffset+20)));
   action("tariff-form",async()=>{const data={reference:el("tariff-reference").value,expected_version:Number(el("tariff-version").value),category:el("tariff-category").value,usage_type:el("tariff-usage").value,method:el("tariff-method").value,currency:el("tariff-currency").value,rate:Number(el("tariff-rate").value),starts_on:el("tariff-start").value,ends_on:el("tariff-end").value};await api(tariffBase,"POST",data,true);if(!token)return;el("tariff-form").reset();await loadTariffs(0);notice("Version de barème créée.");});
   action("quote-form",async()=>{if(!selectedTariff)return;el("quote-result").textContent="";const data={license_id:el("quote-license").value.trim(),usage_date:el("quote-date").value};if(selectedTariff.method==="revenue")data.revenue_minor=Number(el("quote-revenue").value);if(["capacity","frequency"].includes(selectedTariff.method))data.quantity=Number(el("quote-quantity").value);const result=await api(tariffBase+"/"+encodeURIComponent(selectedTariff.id)+"/quote","POST",data,true);if(!token)return;el("quote-result").textContent="Estimation : "+result.amount_minor+" unités minimales "+result.currency+" (version "+result.tariff_version+").";});
+
+  let billingOffset=0,selectedInvoice=null;
+  const billingBase="/api/v1/invoices";
+  const billingStates={paid:"Payée",partial:"Partielle",overdue:"En retard",unpaid:"Impayée"};
+  function resetBilling(){billingOffset=0;selectedInvoice=null;el("billing-workspace").hidden=true;el("receipt-workspace").hidden=true;el("billing-list").replaceChildren();el("receipt-list").replaceChildren();el("billing-form").reset();el("receipt-form").reset();}
+  async function openBilling(){resetBilling();el("billing-workspace").hidden=false;el("billing-form").hidden=identity?.role!=="admin";await loadBilling(0);}
+  async function loadBilling(nextOffset=billingOffset){
+    const rows=await api(billingBase+"?limit=20&offset="+nextOffset,"GET",undefined,true);if(!token)return;
+    billingOffset=nextOffset;const list=el("billing-list");list.replaceChildren();
+    for(const row of rows){const item=document.createElement("article");item.className="tenant-card";const title=document.createElement("strong");title.textContent=row.reference+" · "+billingStates[row.status];item.append(title);
+      for(const value of ["Montant : "+row.amount_minor+" "+row.currency+" (unités minimales)","Encaissé : "+row.paid_minor,"Solde : "+row.balance_minor,"Échéance : "+row.due_on]){const p=document.createElement("p");p.textContent=value;item.append(p);}
+      const button=document.createElement("button");button.type="button";button.textContent="Encaissements";button.addEventListener("click",()=>run(()=>openReceipts(row)));item.append(button);list.append(item);}
+    if(!rows.length){const p=document.createElement("p");p.textContent="Aucune facture sur cette page.";list.append(p);}
+    el("billing-prev").disabled=billingOffset===0;el("billing-next").disabled=rows.length<20;el("billing-page").textContent="Page "+(billingOffset/20+1);
+  }
+  async function openReceipts(row){selectedInvoice=row;el("receipt-title").textContent="Encaissements · "+row.reference;el("receipt-workspace").hidden=false;el("receipt-form").hidden=identity?.role!=="admin";el("receipt-form").reset();
+    const rows=await api(billingBase+"/"+encodeURIComponent(row.id)+"/receipts","GET",undefined,true);if(!token)return;
+    const list=el("receipt-list");list.replaceChildren();
+    for(const receipt of rows){const p=document.createElement("p");p.textContent=receipt.reference+" · "+receipt.amount_minor+" "+row.currency+" · "+receipt.received_on;list.append(p);}
+    if(!rows.length){const p=document.createElement("p");p.textContent="Aucun encaissement.";list.append(p);}
+  }
+  el("billing-refresh").addEventListener("click",()=>run(()=>loadBilling()));
+  el("billing-prev").addEventListener("click",()=>run(()=>loadBilling(Math.max(0,billingOffset-20))));
+  el("billing-next").addEventListener("click",()=>run(()=>loadBilling(billingOffset+20)));
+  action("billing-form",async()=>{const data={reference:el("billing-ref").value,license_id:el("billing-license").value.trim(),tariff_id:el("billing-tariff").value.trim(),usage_date:el("billing-usage").value,due_on:el("billing-due").value};if(el("billing-quantity").value)data.quantity=Number(el("billing-quantity").value);if(el("billing-revenue").value)data.revenue_minor=Number(el("billing-revenue").value);if(!window.confirm("Émettre cette créance interne ?"))return;await api(billingBase,"POST",data,true);if(!token)return;el("billing-form").reset();await loadBilling(0);notice("Créance enregistrée.");});
+  action("receipt-form",async()=>{if(!selectedInvoice)return;const row=selectedInvoice;const amount=Number(el("receipt-amount").value);if(!Number.isSafeInteger(amount)||amount<=0)throw new Error("Montant invalide.");if(!window.confirm("Confirmer un encaissement réellement reçu ?"))return;await api(billingBase+"/"+encodeURIComponent(row.id)+"/receipts","POST",{reference:el("receipt-ref").value,amount_minor:amount,received_on:el("receipt-date").value},true);if(!token)return;await openReceipts(row);await loadBilling();notice("Encaissement enregistré.");});
   el("saved").addEventListener("change",()=>el("finish").disabled=!el("saved").checked);
   el("finish").addEventListener("click",()=>{clearSession();show("login");notice("MFA activé. Reconnectez-vous avec un nouveau code TOTP.");});
   el("open-invite").addEventListener("click",()=>{if(!busy)show("invite");});
