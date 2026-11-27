@@ -1,0 +1,3 @@
+# Initial RBAC
+Permissions are checked against live account membership on every authenticated request. Organization endpoints derive tenant context from the authenticated session only. Module changes are recorded atomically in audit_events; the application role has INSERT but not UPDATE, DELETE or SELECT rights on that table.
+This is a development baseline, not a tamper-proof audit system. Database administrators can alter audit records. Tenant admins currently configure their own modules; subscription entitlements and platform-level administration are not yet enforced. MFA, rate limiting, login audit, account recovery and separation of privileged identity access remain required before production.
