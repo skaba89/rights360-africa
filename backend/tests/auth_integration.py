@@ -312,6 +312,21 @@ def main():
             review_url=payout_url+"/"+payout.json()["id"]+"/reviews"
             assert client.post(review_url,headers=headers,json={"decision":"approve"}).status_code==409
             assert client.get(payout_url,headers=headers).json()[0]["status"]=="pending"
+            field_url="/api/v1/field-visits"
+            assert client.get(field_url,headers=headers).status_code==403
+            with admin.begin() as conn:
+                conn.execute(text("INSERT INTO module_entitlements(organization_id,module_key,granted) VALUES (:org,'field_control',true)"),{"org":org_a})
+            assert client.put("/api/v1/organization/modules/field_control",headers=headers,json={"enabled":True}).status_code==200
+            visit_data={"id":str(uuid4()),"operator_id":operator_id,"visited_at":"2026-01-01T10:00:00Z","latitude_e6":9500000,"longitude_e6":-13700000,"finding":"observed","notes":"Test visit"}
+            assert client.post(field_url,headers=headers,json={**visit_data,"operator_id":str(foreign_operator)}).status_code==404
+            visit=client.post(field_url,headers=headers,json=visit_data)
+            assert visit.status_code==201,visit.text
+            assert visit.json()["license_snapshot"]["historical_status_verified"] is False
+            assert client.post(field_url,headers=headers,json=visit_data).status_code==200
+            assert client.post(field_url,headers=headers,json={**visit_data,"notes":"Changed"}).status_code==409
+            assert len(client.get(field_url,headers=headers).json())==1
+            assert client.get(field_url+"/operators",headers=headers).json()[0]["id"]==operator_id
+
 
 
 
@@ -405,6 +420,7 @@ def main():
             conn.execute(text("DELETE FROM royalty_invoices WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM tariffs WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM exploitation_licenses WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
+            conn.execute(text("DELETE FROM field_visits WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM operators WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM work_rights_shares WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM work_rights_declarations WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
