@@ -4,3 +4,5 @@ SQLAlchemy==2.0.40
 alembic==1.15.2
 psycopg[binary]==3.2.6
 argon2-cffi==23.1.0
+pyotp==2.9.0
+cryptography==45.0.7
