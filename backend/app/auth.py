@@ -4,11 +4,12 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError, InvalidHashError
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from app.db import get_engine
+from app.login_limits import reserve_login
 
 router = APIRouter(prefix="/api/v1/auth", tags=["authentication"])
 hasher = PasswordHasher()
@@ -47,7 +48,8 @@ def current_identity(credentials: HTTPAuthorizationCredentials | None = Depends(
     return dict(row)
 
 @router.post("/login")
-def login(payload: Login, response: Response):
+def login(payload: Login, response: Response, request: Request):
+    reserve_login(payload.email, payload.organization_id, request.client.host if request.client else 'unknown')
     with get_engine().begin() as conn:
         account = conn.execute(text("""
           SELECT a.id, a.password_hash FROM accounts a JOIN memberships m ON m.account_id=a.id
