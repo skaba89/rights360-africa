@@ -64,7 +64,7 @@ jobs:
           docker compose run --rm --no-deps -T --user 0 -v "${PWD}/backend:/workspace:ro" -w /workspace migrate sh -c 'python -m pip install --no-cache-dir -r requirements-dev.txt && PYTHONPATH=/workspace python tests/auth_integration.py'
       - name: Validate operations scripts and isolated restore
         run: |
-          bash -n ops/*.sh
+          for script in ops/*.sh; do bash -n "$script"; done
           secret_dir=$(mktemp -d)
           chmod 700 "$secret_dir"
           trap 'rm -rf "$secret_dir"' EXIT
