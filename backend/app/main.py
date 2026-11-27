@@ -10,6 +10,8 @@ from app.organization import router as organization_router
 app.include_router(organization_router)
 from app.platform_admin import router as platform_router
 app.include_router(platform_router)
+from app.invitations import router as invitations_router
+app.include_router(invitations_router)
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def home():
