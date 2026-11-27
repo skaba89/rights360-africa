@@ -32,6 +32,8 @@ from app.distribution import router as distribution_router
 app.include_router(distribution_router)
 from app.accounting import router as accounting_router
 app.include_router(accounting_router)
+from app.payouts import router as payouts_router
+app.include_router(payouts_router)
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def home():
