@@ -66,7 +66,7 @@ def ready():
 
 PORTAL_HEADERS = {
     "Cache-Control": "no-store",
-    "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+    "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
     "X-Frame-Options": "DENY",
@@ -83,3 +83,19 @@ def portal_css():
 @app.get("/portal.js", include_in_schema=False)
 def portal_js():
     return FileResponse(Path(__file__).parent / "portal.js",media_type="application/javascript",headers=PORTAL_HEADERS)
+
+@app.get("/offline.js", include_in_schema=False)
+def offline_js():
+    return FileResponse(Path(__file__).parent / "offline.js",media_type="application/javascript",headers=PORTAL_HEADERS)
+
+@app.get("/field-sw.js", include_in_schema=False)
+def field_sw():
+    return FileResponse(Path(__file__).parent / "field-sw.js",media_type="application/javascript",headers=PORTAL_HEADERS)
+
+@app.get("/field-manifest.json", include_in_schema=False)
+def field_manifest():
+    return FileResponse(Path(__file__).parent / "field-manifest.json",media_type="application/manifest+json",headers=PORTAL_HEADERS)
+
+@app.get("/field-icon.svg", include_in_schema=False)
+def field_icon():
+    return FileResponse(Path(__file__).parent / "field-icon.svg",media_type="image/svg+xml",headers=PORTAL_HEADERS)
