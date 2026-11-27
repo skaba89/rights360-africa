@@ -302,3 +302,25 @@ class AccountingLine(Base):
     artist_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     debit_minor: Mapped[int] = mapped_column(BigInteger,nullable=False)
     credit_minor: Mapped[int] = mapped_column(BigInteger,nullable=False)
+
+class PayoutOrder(Base):
+    __tablename__ = "payout_orders"
+    __table_args__ = (ForeignKeyConstraint(["organization_id","distribution_id"],["royalty_distributions.organization_id","royalty_distributions.id"]),ForeignKeyConstraint(["organization_id","artist_id"],["artists.organization_id","artists.id"]),UniqueConstraint("organization_id","id",name="payout_org_id_unique"),UniqueConstraint("organization_id","distribution_id","artist_id",name="payout_once"),CheckConstraint("amount_minor>0 AND channel IN ('bank','orange_money','mtn_momo','other')",name="payout_values_valid"))
+    id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    distribution_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    artist_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    channel: Mapped[str] = mapped_column(String(30),nullable=False)
+    amount_minor: Mapped[int] = mapped_column(BigInteger,nullable=False)
+    currency: Mapped[str] = mapped_column(String(3),nullable=False)
+    created_by: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False,server_default=func.now())
+
+class PayoutReview(Base):
+    __tablename__ = "payout_reviews"
+    __table_args__ = (ForeignKeyConstraint(["organization_id","order_id"],["payout_orders.organization_id","payout_orders.id"]),CheckConstraint("decision IN ('approve','reject')",name="payout_decision_valid"))
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
+    order_id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
+    reviewer_id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
+    decision: Mapped[str] = mapped_column(String(20),nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False,server_default=func.now())
