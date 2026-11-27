@@ -53,9 +53,30 @@ def main():
             platform = client.get("/api/v1/platform/me",headers=headers)
             assert platform.status_code == 200
             assert platform.json()["platform_role"] == "super_admin"
+            slug = "test-" + str(uuid4())
+            created = client.post("/api/v1/platform/organizations",headers=headers,json={"slug":slug,"name":"Test client"})
+            assert created.status_code == 201, created.text
+            created_id = created.json()["id"]
+            try:
+                assert client.post("/api/v1/platform/organizations",headers=headers,json={"slug":slug,"name":"Duplicate"}).status_code == 409
+                listing = client.get("/api/v1/platform/organizations",headers=headers)
+                assert listing.status_code == 200
+                assert any(item["id"] == created_id for item in listing.json())
+                assert client.patch(f"/api/v1/platform/organizations/{org_a}/status",headers=headers,json={"active":False}).status_code == 409
+                assert client.patch(f"/api/v1/platform/organizations/{created_id}/status",headers=headers,json={"active":False}).status_code == 200
+                assert client.patch(f"/api/v1/platform/organizations/{created_id}/status",headers=headers,json={"active":True}).status_code == 200
+                with admin.begin() as conn:
+                    assert conn.execute(text("SELECT count(*) FROM platform_audit_events WHERE organization_id=CAST(:id AS uuid)"), {"id":created_id}).scalar_one() == 3
+                with get_engine().connect() as conn:
+                    assert conn.execute(text("SELECT count(*) FROM organizations WHERE id=CAST(:id AS uuid)"), {"id":created_id}).scalar_one() == 0
+            finally:
+                with admin.begin() as conn:
+                    conn.execute(text("DELETE FROM platform_audit_events WHERE organization_id=CAST(:id AS uuid)"), {"id":created_id})
+                    conn.execute(text("DELETE FROM organizations WHERE id=CAST(:id AS uuid)"), {"id":created_id})
             with admin.begin() as conn:
                 conn.execute(text("UPDATE platform_admins SET active=false WHERE account_id=:id"), {"id":account})
             assert client.get("/api/v1/platform/me",headers=headers).status_code == 403
+            assert client.get("/api/v1/platform/organizations",headers=headers).status_code == 403
             assert client.put("/api/v1/organization/modules/artists",headers=headers,json={"enabled":True}).status_code == 200
             assert client.put("/api/v1/organization/modules/unknown",headers=headers,json={"enabled":True}).status_code == 404
             with admin.begin() as conn:
