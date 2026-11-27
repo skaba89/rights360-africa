@@ -10,6 +10,8 @@ PERMISSIONS = {
 
 def require_permission(permission: str):
     def check(identity=Depends(current_identity)):
+        if identity["role"] == "admin" and not identity.get("mfa_enabled", False):
+            raise HTTPException(status_code=403, detail="MFA enrollment required")
         if permission not in PERMISSIONS.get(identity["role"], frozenset()):
             raise HTTPException(status_code=403, detail="Permission denied")
         return identity
