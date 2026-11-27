@@ -42,8 +42,17 @@ def main():
             with admin.begin() as conn:
                 conn.execute(text("UPDATE memberships SET active=false WHERE account_id=:id"), {"id":account})
             assert client.get("/api/v1/auth/me",headers=headers).status_code == 401
+            # Seed the current window at its threshold to avoid clock-boundary flakiness.
+            from app.login_limits import bucket_key
+            with admin.begin() as conn:
+                conn.execute(text("INSERT INTO login_buckets VALUES (:key,date_trunc('minute',now()),10) ON CONFLICT (bucket) DO UPDATE SET attempts=10,window_start=EXCLUDED.window_start"), {"key":bucket_key("account",email)})
+            blocked = client.post("/api/v1/auth/login",json=payload)
+            assert blocked.status_code == 429
+            assert blocked.headers["Retry-After"] == "60"
     finally:
         with admin.begin() as conn:
+            from app.login_limits import bucket_key
+            conn.execute(text("DELETE FROM login_buckets WHERE bucket IN (:account,:peer)"), {"account":bucket_key("account",email),"peer":bucket_key("peer","testclient")})
             conn.execute(text("DELETE FROM audit_events WHERE organization_id=:org"), {"org":org_a})
             conn.execute(text("DELETE FROM tenant_modules WHERE organization_id=:org"), {"org":org_a})
             conn.execute(text("DELETE FROM memberships WHERE account_id=:id"), {"id":account})
