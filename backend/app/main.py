@@ -11,3 +11,14 @@ def home():
 @app.get("/healthz")
 def health():
     return {"status": "ok", "service": "rights360-api"}
+
+@app.get("/readyz")
+def ready():
+    from app.db import check_database
+    from sqlalchemy.exc import SQLAlchemyError
+    from fastapi import HTTPException
+    try:
+        check_database()
+    except (SQLAlchemyError, KeyError):
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    return {"status": "ready"}
