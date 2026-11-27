@@ -27,6 +27,25 @@ def main():
             identity = client.get("/api/v1/auth/me",headers=headers)
             assert identity.status_code == 200
             assert identity.json()["organization_id"] == str(org_a)
+            assert response.json()["mfa_required"] is True
+            assert identity.json()["mfa_required"] is True
+            assert client.get("/api/v1/organization",headers=headers).status_code == 403
+            assert client.put("/api/v1/organization/modules/artists",headers=headers,json={"enabled":True}).status_code == 403
+            # Enroll this administrator before exercising privileged operations.
+            import pyotp
+            import time
+            setup_admin = client.post("/api/v1/auth/mfa/setup",headers=headers,json={"password":password})
+            assert setup_admin.status_code == 200
+            admin_totp = pyotp.TOTP(setup_admin.json()["secret"])
+            admin_step = int(time.time() // 30)
+            confirmed_admin = client.post("/api/v1/auth/mfa/confirm",headers=headers,json={"password":password,"otp":admin_totp.at((admin_step-1)*30)})
+            assert confirmed_admin.status_code == 200
+            admin_codes = confirmed_admin.json()["recovery_codes"]
+            assert client.get("/api/v1/auth/me",headers=headers).status_code == 401
+            response = client.post("/api/v1/auth/login",json={**payload,"otp":admin_totp.at(admin_step*30)})
+            assert response.status_code == 200
+            assert response.json()["mfa_required"] is False
+            headers = {"Authorization":"Bearer "+response.json()["access_token"]}
             assert client.get("/api/v1/organization",headers=headers).json()["id"] == str(org_a)
             assert client.put("/api/v1/organization/modules/artists",headers=headers,json={"enabled":True}).status_code == 200
             assert client.put("/api/v1/organization/modules/unknown",headers=headers,json={"enabled":True}).status_code == 404
@@ -36,7 +55,7 @@ def main():
             assert client.put("/api/v1/organization/modules/artists",headers=headers,json={"enabled":False}).status_code == 403
             assert client.post("/api/v1/auth/logout",headers=headers).status_code == 204
             assert client.get("/api/v1/auth/me",headers=headers).status_code == 401
-            response = client.post("/api/v1/auth/login",json=payload)
+            response = client.post("/api/v1/auth/login",json={**payload,"recovery_code":admin_codes[0]})
             assert response.status_code == 200
             headers = {"Authorization":"Bearer "+response.json()["access_token"]}
             with admin.begin() as conn:
