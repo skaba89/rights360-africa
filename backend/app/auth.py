@@ -42,21 +42,24 @@ def current_identity(credentials: HTTPAuthorizationCredentials | None = Depends(
         raise invalid()
     with get_engine().connect() as conn:
         row = conn.execute(text("""
-          SELECT a.id AS account_id, a.email, m.organization_id, m.role
+          SELECT a.id AS account_id, a.email, m.organization_id, m.role, COALESCE(f.enabled,false) AS mfa_enabled
           FROM auth_sessions s JOIN accounts a ON a.id=s.account_id
           JOIN memberships m ON m.account_id=s.account_id AND m.organization_id=s.organization_id
+          LEFT JOIN account_mfa f ON f.account_id=a.id
           WHERE s.token_hash=:token AND s.expires_at>now() AND a.active AND m.active
         """), {"token": digest(credentials.credentials)}).mappings().first()
     if row is None:
         raise invalid()
-    return dict(row)
+    identity = dict(row)
+    identity['mfa_required'] = identity['role'] == 'admin' and not identity['mfa_enabled']
+    return identity
 
 @router.post("/login")
 def login(payload: Login, response: Response, request: Request):
     reserve_login(payload.email, payload.organization_id, request.client.host if request.client else 'unknown')
     with get_engine().begin() as conn:
         account = conn.execute(text("""
-          SELECT a.id, a.password_hash FROM accounts a JOIN memberships m ON m.account_id=a.id
+          SELECT a.id, a.password_hash, m.role FROM accounts a JOIN memberships m ON m.account_id=a.id
           WHERE a.email=:email AND m.organization_id=:org AND a.active AND m.active
         """), {"email":payload.email.strip().lower(),"org":payload.organization_id}).mappings().first()
         valid = verify_password(account["password_hash"] if account else dummy_hash, payload.password)
@@ -74,7 +77,7 @@ def login(payload: Login, response: Response, request: Request):
         conn.execute(text("INSERT INTO auth_sessions(token_hash,account_id,organization_id,expires_at) VALUES (:token,:account,:org,:expiry)"),
           {"token":digest(token),"account":account["id"],"org":payload.organization_id,"expiry":datetime.now(timezone.utc)+timedelta(minutes=30)})
     response.headers["Cache-Control"] = "no-store"
-    return {"access_token":token,"token_type":"bearer","expires_in":1800}
+    return {"access_token":token,"token_type":"bearer","expires_in":1800,"mfa_required":account["role"] == "admin" and not enabled}
 
 @router.get("/me")
 def me(response: Response, identity=Depends(current_identity)):
