@@ -247,7 +247,7 @@ class RoyaltyInvoice(Base):
 
 class RoyaltyReceipt(Base):
     __tablename__ = "royalty_receipts"
-    __table_args__ = (ForeignKeyConstraint(["organization_id","invoice_id"],["royalty_invoices.organization_id","royalty_invoices.id"]),UniqueConstraint("organization_id","reference",name="receipt_reference_unique"),CheckConstraint("amount_minor>0",name="receipt_amount_valid"))
+    __table_args__ = (ForeignKeyConstraint(["organization_id","invoice_id"],["royalty_invoices.organization_id","royalty_invoices.id"]),UniqueConstraint("organization_id","reference",name="receipt_reference_unique"),UniqueConstraint("organization_id","id",name="receipt_org_id_unique"),CheckConstraint("amount_minor>0",name="receipt_amount_valid"))
     id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
     organization_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
     invoice_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
@@ -255,3 +255,28 @@ class RoyaltyReceipt(Base):
     amount_minor: Mapped[int] = mapped_column(BigInteger,nullable=False)
     received_on: Mapped[date] = mapped_column(Date,nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False,server_default=func.now())
+
+class RoyaltyDistribution(Base):
+    __tablename__ = "royalty_distributions"
+    __table_args__ = (ForeignKeyConstraint(["organization_id","receipt_id"],["royalty_receipts.organization_id","royalty_receipts.id"]),ForeignKeyConstraint(["organization_id","declaration_id"],["work_rights_declarations.organization_id","work_rights_declarations.id"]),UniqueConstraint("organization_id","id",name="distribution_org_id_unique"),UniqueConstraint("organization_id","receipt_id",name="distribution_receipt_unique"),CheckConstraint("gross_minor>0 AND commission_bps BETWEEN 0 AND 10000 AND commission_minor>=0 AND net_minor>=0 AND gross_minor=commission_minor+net_minor",name="distribution_amounts_valid"))
+    id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    receipt_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    declaration_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    currency: Mapped[str] = mapped_column(String(3),nullable=False)
+    gross_minor: Mapped[int] = mapped_column(BigInteger,nullable=False)
+    commission_bps: Mapped[int] = mapped_column(Integer,nullable=False)
+    commission_minor: Mapped[int] = mapped_column(BigInteger,nullable=False)
+    net_minor: Mapped[int] = mapped_column(BigInteger,nullable=False)
+    created_by: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False,server_default=func.now())
+
+class RoyaltyDistributionLine(Base):
+    __tablename__ = "royalty_distribution_lines"
+    __table_args__ = (ForeignKeyConstraint(["organization_id","distribution_id"],["royalty_distributions.organization_id","royalty_distributions.id"]),ForeignKeyConstraint(["organization_id","artist_id"],["artists.organization_id","artists.id"]),CheckConstraint("amount_minor>=0 AND basis_points BETWEEN 1 AND 10000",name="distribution_line_valid"))
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
+    distribution_id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
+    artist_id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
+    role: Mapped[str] = mapped_column(String(30),primary_key=True)
+    basis_points: Mapped[int] = mapped_column(Integer,nullable=False)
+    amount_minor: Mapped[int] = mapped_column(BigInteger,nullable=False)
