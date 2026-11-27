@@ -18,6 +18,8 @@ from app.member_invitations import router as member_invitations_router
 app.include_router(member_invitations_router)
 from app.artists import router as artists_router
 app.include_router(artists_router)
+from app.works import router as works_router
+app.include_router(works_router)
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def home():
