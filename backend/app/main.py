@@ -12,6 +12,8 @@ from app.platform_admin import router as platform_router
 app.include_router(platform_router)
 from app.invitations import router as invitations_router
 app.include_router(invitations_router)
+from app.members import router as members_router
+app.include_router(members_router)
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def home():
