@@ -280,3 +280,25 @@ class RoyaltyDistributionLine(Base):
     role: Mapped[str] = mapped_column(String(30),primary_key=True)
     basis_points: Mapped[int] = mapped_column(Integer,nullable=False)
     amount_minor: Mapped[int] = mapped_column(BigInteger,nullable=False)
+
+class AccountingEntry(Base):
+    __tablename__ = "accounting_entries"
+    __table_args__ = (UniqueConstraint("organization_id","id",name="entry_org_id_unique"),UniqueConstraint("organization_id","source_type","source_id",name="entry_source_unique"),CheckConstraint("source_type IN ('invoice','receipt','distribution')",name="entry_source_valid"))
+    id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid,ForeignKey("organizations.id"),nullable=False)
+    source_type: Mapped[str] = mapped_column(String(20),nullable=False)
+    source_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    currency: Mapped[str] = mapped_column(String(3),nullable=False)
+    posted_by: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    posted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False,server_default=func.now())
+
+class AccountingLine(Base):
+    __tablename__ = "accounting_lines"
+    __table_args__ = (ForeignKeyConstraint(["organization_id","entry_id"],["accounting_entries.organization_id","accounting_entries.id"]),ForeignKeyConstraint(["organization_id","artist_id"],["artists.organization_id","artists.id"]),CheckConstraint("(debit_minor>0 AND credit_minor=0) OR (credit_minor>0 AND debit_minor=0)",name="accounting_side_valid"))
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
+    entry_id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
+    line_no: Mapped[int] = mapped_column(Integer,primary_key=True)
+    account_key: Mapped[str] = mapped_column(String(40),nullable=False)
+    artist_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    debit_minor: Mapped[int] = mapped_column(BigInteger,nullable=False)
+    credit_minor: Mapped[int] = mapped_column(BigInteger,nullable=False)
