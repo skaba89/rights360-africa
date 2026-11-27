@@ -2,9 +2,9 @@ from fastapi import Depends, HTTPException
 from app.auth import current_identity
 
 PERMISSIONS = {
-    "admin": frozenset({"organization:read", "modules:read", "modules:write", "members:read", "members:write", "artists:read", "artists:write", "works:read", "works:write", "licenses:read", "licenses:write", "licenses:approve", "billing:read", "billing:write", "distribution:read", "distribution:write", "payout:create", "payout:review", "field:read", "field:write", "media:read", "media:write", "media:review", "analytics:read"}),
-    "manager": frozenset({"organization:read", "modules:read", "artists:read", "artists:write", "works:read", "works:write", "licenses:read", "licenses:write", "billing:read", "distribution:read", "payout:create", "field:read", "field:write", "media:read", "media:write", "analytics:read"}),
-    "auditor": frozenset({"organization:read", "modules:read", "artists:read", "works:read", "licenses:read", "billing:read", "distribution:read", "payout:review", "field:read", "media:read", "analytics:read"}),
+    "admin": frozenset({"organization:read", "modules:read", "modules:write", "members:read", "members:write", "artists:read", "artists:write", "works:read", "works:write", "licenses:read", "licenses:write", "licenses:approve", "billing:read", "billing:write", "distribution:read", "distribution:write", "payout:create", "payout:review", "field:read", "field:write", "media:read", "media:write", "media:review", "analytics:read", "exchange:read", "exchange:write"}),
+    "manager": frozenset({"organization:read", "modules:read", "artists:read", "artists:write", "works:read", "works:write", "licenses:read", "licenses:write", "billing:read", "distribution:read", "payout:create", "field:read", "field:write", "media:read", "media:write", "analytics:read", "exchange:read"}),
+    "auditor": frozenset({"organization:read", "modules:read", "artists:read", "works:read", "licenses:read", "billing:read", "distribution:read", "payout:review", "field:read", "media:read", "analytics:read", "exchange:read"}),
     "artist": frozenset({"organization:read"}),
 }
 
