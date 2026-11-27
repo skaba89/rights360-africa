@@ -46,7 +46,7 @@ def current_identity(credentials: HTTPAuthorizationCredentials | None = Depends(
           FROM auth_sessions s JOIN accounts a ON a.id=s.account_id
           JOIN memberships m ON m.account_id=s.account_id AND m.organization_id=s.organization_id
           LEFT JOIN account_mfa f ON f.account_id=a.id
-          WHERE s.token_hash=:token AND s.expires_at>now() AND a.active AND m.active
+          WHERE s.token_hash=:token AND s.expires_at>now() AND a.active AND m.active AND public.organization_active(m.organization_id)
         """), {"token": digest(credentials.credentials)}).mappings().first()
     if row is None:
         raise invalid()
@@ -60,7 +60,7 @@ def login(payload: Login, response: Response, request: Request):
     with get_engine().begin() as conn:
         account = conn.execute(text("""
           SELECT a.id, a.password_hash, m.role FROM accounts a JOIN memberships m ON m.account_id=a.id
-          WHERE a.email=:email AND m.organization_id=:org AND a.active AND m.active
+          WHERE a.email=:email AND m.organization_id=:org AND a.active AND m.active AND public.organization_active(m.organization_id)
         """), {"email":payload.email.strip().lower(),"org":payload.organization_id}).mappings().first()
         valid = verify_password(account["password_hash"] if account else dummy_hash, payload.password)
         if not account or not valid:
