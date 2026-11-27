@@ -104,3 +104,15 @@ class ModuleEntitlement(Base):
     module_key: Mapped[str] = mapped_column(String(80),primary_key=True)
     granted: Mapped[bool] = mapped_column(Boolean,nullable=False,server_default=false())
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+class MemberInvitation(Base):
+    __tablename__ = "member_invitations"
+    __table_args__ = (CheckConstraint("role IN ('manager','auditor','artist')",name="member_invitation_role_valid"),)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid,ForeignKey("organizations.id"),nullable=False)
+    email: Mapped[str] = mapped_column(String(254),nullable=False)
+    role: Mapped[str] = mapped_column(String(40),nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64),unique=True,nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

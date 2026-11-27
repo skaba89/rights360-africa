@@ -109,6 +109,35 @@ def main():
             assert client.get("/api/v1/platform/me",headers=headers).status_code == 403
             assert client.get("/api/v1/platform/organizations",headers=headers).status_code == 403
             assert client.put(entitlement_url+"/artists",headers=headers,json={"granted":True}).status_code == 403
+            invite_email = f"{uuid4()}@example.invalid"
+            invite_url = "/api/v1/organization/invitations"
+            accept_url = "/api/v1/auth/member-invitations/accept"
+            try:
+                assert client.post(invite_url,headers=headers,json={"email":invite_email,"role":"admin"}).status_code == 422
+                first = client.post(invite_url,headers=headers,json={"email":invite_email,"role":"artist"})
+                assert first.status_code == 201, first.text
+                assert client.delete(invite_url+"/"+first.json()["id"],headers=headers).status_code == 204
+                assert client.post(accept_url,json={"token":first.json()["token"],"password":password}).status_code == 400
+                second = client.post(invite_url,headers=headers,json={"email":invite_email,"role":"manager"})
+                assert second.status_code == 201, second.text
+                third = client.post(invite_url,headers=headers,json={"email":invite_email,"role":"auditor"})
+                assert third.status_code == 201, third.text
+                assert client.post(accept_url,json={"token":second.json()["token"],"password":password}).status_code == 400
+                accepted = client.post(accept_url,json={"token":third.json()["token"],"password":password})
+                assert accepted.status_code == 201, accepted.text
+                assert accepted.json()["organization_id"] == str(org_a)
+                assert client.post(accept_url,json={"token":third.json()["token"],"password":password}).status_code == 400
+                logged = client.post("/api/v1/auth/login",json={"email":invite_email,"password":password,"organization_id":str(org_a)})
+                assert logged.status_code == 200
+                invited_headers = {"Authorization":"Bearer "+logged.json()["access_token"]}
+                assert client.get("/api/v1/auth/me",headers=invited_headers).json()["role"] == "auditor"
+                assert client.post(invite_url,headers=invited_headers,json={"email":f"{uuid4()}@example.invalid","role":"artist"}).status_code == 403
+                assert client.post(invite_url,headers=headers,json={"email":invite_email,"role":"artist"}).status_code == 409
+            finally:
+                with admin.begin() as conn:
+                    conn.execute(text("DELETE FROM member_invitations WHERE organization_id=:org"),{"org":org_a})
+                    conn.execute(text("DELETE FROM memberships WHERE account_id IN (SELECT id FROM accounts WHERE email=:email)"),{"email":invite_email})
+                    conn.execute(text("DELETE FROM accounts WHERE email=:email"),{"email":invite_email})
             collaborator, outside = uuid4(), uuid4()
             with admin.begin() as conn:
                 for member_id, org in ((collaborator,org_a),(outside,org_b)):
