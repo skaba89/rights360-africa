@@ -11,6 +11,7 @@ from sqlalchemy import text
 from app.db import get_engine
 from app.login_limits import reserve_login
 from app.mfa import consume_code, cipher, new_secret
+from app.recovery import generate_codes, consume_recovery
 
 router = APIRouter(prefix="/api/v1/auth", tags=["authentication"])
 hasher = PasswordHasher()
@@ -22,6 +23,7 @@ class Login(BaseModel):
     password: str = Field(min_length=1, max_length=256)
     organization_id: UUID
     otp: str | None = Field(default=None, max_length=6)
+    recovery_code: str | None = Field(default=None, max_length=35)
 
 def digest(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
@@ -62,8 +64,11 @@ def login(payload: Login, response: Response, request: Request):
             raise invalid()
         conn.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(CAST(:id AS text), 360))"), {"id":account["id"]})
         enabled = conn.execute(text("SELECT enabled FROM account_mfa WHERE account_id=:id"), {"id":account["id"]}).scalar_one_or_none()
-        if enabled and not consume_code(conn, account["id"], payload.otp):
-            raise invalid()
+        if enabled:
+            if payload.otp and payload.recovery_code:
+                raise invalid()
+            if not (consume_recovery(conn, account["id"], payload.recovery_code) if payload.recovery_code else consume_code(conn, account["id"], payload.otp)):
+                raise invalid()
         token = secrets.token_urlsafe(48)
         conn.execute(text("DELETE FROM auth_sessions WHERE account_id=:account AND expires_at<=now()"), {"account":account["id"]})
         conn.execute(text("INSERT INTO auth_sessions(token_hash,account_id,organization_id,expires_at) VALUES (:token,:account,:org,:expiry)"),
@@ -118,6 +123,18 @@ def confirm_mfa(payload: MFAConfirm, request: Request, response: Response, ident
         if not consume_code(conn,identity["account_id"],payload.otp,require_enabled=False):
             raise invalid()
         conn.execute(text("UPDATE account_mfa SET enabled=true WHERE account_id=:id"),{"id":identity["account_id"]})
+        codes = generate_codes(conn, identity["account_id"])
         conn.execute(text("DELETE FROM auth_sessions WHERE account_id=:id"),{"id":identity["account_id"]})
     response.headers["Cache-Control"]="no-store"
-    return {"enabled":True,"reauthenticate":True}
+    return {"enabled":True,"reauthenticate":True,"recovery_codes":codes}
+
+@router.post("/mfa/recovery/regenerate")
+def regenerate_recovery(payload: MFAConfirm, request: Request, response: Response, identity=Depends(current_identity)):
+    reserve_login(identity["email"],identity["organization_id"],request.client.host if request.client else "unknown")
+    with get_engine().begin() as conn:
+        lock_and_verify(conn,identity,payload.password)
+        if not consume_code(conn,identity["account_id"],payload.otp):
+            raise invalid()
+        codes = generate_codes(conn,identity["account_id"])
+    response.headers["Cache-Control"]="no-store"
+    return {"recovery_codes":codes}

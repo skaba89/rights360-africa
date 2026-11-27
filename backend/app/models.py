@@ -64,3 +64,8 @@ class AccountMFA(Base):
     secret_ciphertext: Mapped[str] = mapped_column(Text, nullable=False)
     last_step: Mapped[int] = mapped_column(BigInteger, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
+
+class MFARecoveryCode(Base):
+    __tablename__ = "mfa_recovery_codes"
+    account_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True)
+    code_hash: Mapped[str] = mapped_column(String(64), primary_key=True)

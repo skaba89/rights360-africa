@@ -67,11 +67,15 @@ def main():
                 step = int(time.time() // 30)
                 confirmed = client.post("/api/v1/auth/mfa/confirm",headers=mfa_headers,json={"password":password,"otp":totp.at((step-1)*30)})
                 assert confirmed.status_code == 200, confirmed.text
+                codes = confirmed.json()["recovery_codes"]
+                assert len(set(codes)) == 10
                 assert client.get("/api/v1/auth/me",headers=mfa_headers).status_code == 401
                 assert client.post("/api/v1/auth/login",json=mfa_payload).status_code == 401
                 code = totp.at(step*30)
                 assert client.post("/api/v1/auth/login",json={**mfa_payload,"otp":code}).status_code == 200
                 assert client.post("/api/v1/auth/login",json={**mfa_payload,"otp":code}).status_code == 401
+                assert client.post("/api/v1/auth/login",json={**mfa_payload,"recovery_code":codes[0]}).status_code == 200
+                assert client.post("/api/v1/auth/login",json={**mfa_payload,"recovery_code":codes[0]}).status_code == 401
             finally:
                 with admin.begin() as conn:
                     conn.execute(text("DELETE FROM memberships WHERE account_id=:id"), {"id":mfa_account})
