@@ -288,6 +288,19 @@ def main():
             assert sum(int(line["amount_minor"]) for line in dist.json()["lines"])==int(dist.json()["net_minor"])
             assert client.post(dist_url,headers=headers,json=dist_data).status_code == 409
             assert len(client.get(dist_url+"/"+dist.json()["id"]+"/lines",headers=headers).json())==2
+            accounting_url="/api/v1/accounting/entries"
+            posting={"source_type":"distribution","source_id":dist.json()["id"]}
+            assert client.post(accounting_url,headers=headers,json=posting).status_code==409
+            for kind,source in (("invoice",invoice.json()["id"]),("receipt",receipt_id),("distribution",dist.json()["id"])):
+                entry=client.post(accounting_url,headers=headers,json={"source_type":kind,"source_id":source})
+                assert entry.status_code==201,entry.text
+                lines=entry.json()["lines"]
+                assert sum(int(x["debit_minor"]) for x in lines)==sum(int(x["credit_minor"]) for x in lines)
+                assert client.post(accounting_url,headers=headers,json={"source_type":kind,"source_id":source}).status_code==409
+            assert len(client.get(accounting_url,headers=headers).json())==3
+            balances=client.get("/api/v1/accounting/balances",headers=headers).json()
+            assert sum(int(x["balance_minor"]) for x in balances)==0
+
 
 
 
@@ -369,6 +382,8 @@ def main():
             from app.login_limits import bucket_key
             conn.execute(text("DELETE FROM login_buckets WHERE bucket IN (:account,:peer)"), {"account":bucket_key("account",email),"peer":bucket_key("peer","testclient")})
             conn.execute(text("DELETE FROM audit_events WHERE organization_id=:org"), {"org":org_a})
+            conn.execute(text("DELETE FROM accounting_lines WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
+            conn.execute(text("DELETE FROM accounting_entries WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM royalty_distribution_lines WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM royalty_distributions WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM royalty_receipts WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
