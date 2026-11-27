@@ -1,7 +1,7 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, date
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy import BigInteger, Integer, Identity, func, Boolean, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, String, Text, Uuid, UniqueConstraint, Index, false, true
+from sqlalchemy import BigInteger, Integer, Identity, func, Boolean, CheckConstraint, Date, DateTime, ForeignKey, ForeignKeyConstraint, String, Text, Uuid, UniqueConstraint, Index, false, true
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 class Base(DeclarativeBase):
@@ -180,3 +180,29 @@ class WorkRightsShare(Base):
     artist_id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
     role: Mapped[str] = mapped_column(String(30),primary_key=True)
     basis_points: Mapped[int] = mapped_column(Integer,nullable=False)
+
+class Operator(Base):
+    __tablename__ = "operators"
+    __table_args__ = (UniqueConstraint("organization_id","id",name="operator_org_id_unique"),UniqueConstraint("organization_id","reference",name="operator_reference_unique"),CheckConstraint("category IN ('radio','television','hotel','restaurant','event','digital','other')",name="operator_category_valid"))
+    id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid,ForeignKey("organizations.id"),nullable=False)
+    reference: Mapped[str] = mapped_column(String(50),nullable=False)
+    name: Mapped[str] = mapped_column(String(200),nullable=False)
+    category: Mapped[str] = mapped_column(String(30),nullable=False)
+    email: Mapped[str | None] = mapped_column(String(254))
+    phone: Mapped[str | None] = mapped_column(String(40))
+
+class ExploitationLicense(Base):
+    __tablename__ = "exploitation_licenses"
+    __table_args__ = (ForeignKeyConstraint(["organization_id","operator_id"],["operators.organization_id","operators.id"]),ForeignKeyConstraint(["organization_id","work_id"],["works.organization_id","works.id"]),UniqueConstraint("organization_id","reference",name="exploitation_reference_unique"),CheckConstraint("ends_on>=starts_on",name="exploitation_dates_valid"),CheckConstraint("status IN ('draft','active','revoked')",name="exploitation_status_valid"))
+    id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    operator_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    work_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    reference: Mapped[str] = mapped_column(String(50),nullable=False)
+    territory: Mapped[str] = mapped_column(String(100),nullable=False)
+    usage_type: Mapped[str] = mapped_column(String(100),nullable=False)
+    starts_on: Mapped[date] = mapped_column(Date,nullable=False)
+    ends_on: Mapped[date] = mapped_column(Date,nullable=False)
+    status: Mapped[str] = mapped_column(String(20),nullable=False,server_default="draft")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False,server_default=func.now())

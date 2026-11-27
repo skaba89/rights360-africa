@@ -221,6 +221,30 @@ def main():
             history=client.get(rights_url,headers=headers).json()
             assert [row["version"] for row in history] == [2,1]
             assert history[1]["total_basis_points"] == 10000
+            assert client.get("/api/v1/operators",headers=headers).status_code == 403
+            with admin.begin() as conn:
+                conn.execute(text("INSERT INTO module_entitlements(organization_id,module_key,granted) VALUES (:org,'licenses',true)"),{"org":org_a})
+            assert client.put("/api/v1/organization/modules/licenses",headers=headers,json={"enabled":True}).status_code == 200
+            operator=client.post("/api/v1/operators",headers=headers,json={"reference":"radio-1","name":"Test radio","category":"radio"})
+            assert operator.status_code == 201, operator.text
+            operator_id=operator.json()["id"]
+            assert client.post("/api/v1/operators",headers=headers,json={"reference":"radio-1","name":"Duplicate","category":"radio"}).status_code == 409
+            foreign_operator=uuid4()
+            with admin.begin() as conn:
+                conn.execute(text("INSERT INTO operators(id,organization_id,reference,name,category) VALUES (:id,:org,'RADIO-1','Outside','radio')"),{"id":foreign_operator,"org":org_b})
+            license_data={"reference":"lic-1","operator_id":operator_id,"work_id":work_id,"territory":"Guinee","usage_type":"broadcast","starts_on":"2020-01-01","ends_on":"2099-12-31"}
+            lic_url="/api/v1/exploitation-licenses"
+            assert client.post(lic_url,headers=headers,json={**license_data,"operator_id":str(foreign_operator)}).status_code == 404
+            assert client.post(lic_url,headers=headers,json={**license_data,"ends_on":"2019-01-01"}).status_code == 422
+            lic=client.post(lic_url,headers=headers,json=license_data)
+            assert lic.status_code == 201, lic.text
+            assert lic.json()["status"]=="draft"
+            status_url=lic_url+"/"+lic.json()["id"]+"/status"
+            assert client.patch(status_url,headers=headers,json={"status":"active"}).status_code == 200
+            assert client.get(lic_url,headers=headers).json()[0]["effective"] is True
+            assert client.patch(status_url,headers=headers,json={"status":"revoked"}).status_code == 200
+            assert client.patch(status_url,headers=headers,json={"status":"active"}).status_code == 409
+
 
             with admin.begin() as conn:
                 conn.execute(text("UPDATE module_entitlements SET granted=false WHERE organization_id=:org AND module_key='works'"),{"org":org_a})
@@ -295,6 +319,8 @@ def main():
             from app.login_limits import bucket_key
             conn.execute(text("DELETE FROM login_buckets WHERE bucket IN (:account,:peer)"), {"account":bucket_key("account",email),"peer":bucket_key("peer","testclient")})
             conn.execute(text("DELETE FROM audit_events WHERE organization_id=:org"), {"org":org_a})
+            conn.execute(text("DELETE FROM exploitation_licenses WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
+            conn.execute(text("DELETE FROM operators WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM work_rights_shares WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM work_rights_declarations WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM works WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})

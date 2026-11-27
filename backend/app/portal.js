@@ -72,7 +72,7 @@
   const tenantBase="/api/v1/organization";
   const roles={admin:"Administrateur",manager:"Gestionnaire",auditor:"Auditeur",artist:"Artiste"};
   function hideMemberInvitation(){el("member-invite-token").textContent="";el("member-invite-id").textContent="";el("member-invite-result").hidden=true;}
-  function resetInstitution(){resetWorks();resetArtists();identity=null;memberOffset=0;hideMemberInvitation();for(const id of ["institution-name","institution-role","institution-module-list","member-list","member-page"])el(id).replaceChildren();el("institution-modules").hidden=true;el("institution-members").hidden=true;}
+  function resetInstitution(){resetLicenses();resetWorks();resetArtists();identity=null;memberOffset=0;hideMemberInvitation();for(const id of ["institution-name","institution-role","institution-module-list","member-list","member-page"])el(id).replaceChildren();el("institution-modules").hidden=true;el("institution-members").hidden=true;}
   async function loadInstitution(){
     const me=await api("/api/v1/auth/me","GET",undefined,true);if(!token)return;
     if(me.mfa_required){identity=null;show("mfa");return;}
@@ -92,14 +92,16 @@
     const list=el("institution-module-list");list.replaceChildren();
     const artistEnabled=rows.some(row=>row.module_key==="artists"&&row.enabled);
     if(!artistEnabled)resetArtists();
+    if(!rows.some(row=>row.module_key==="licenses"&&row.enabled))resetLicenses();
     if(!rows.some(row=>row.module_key==="works"&&row.enabled))resetWorks();
     for(const row of rows){
       const item=document.createElement("article");item.className="tenant-card";
       const title=document.createElement("strong");title.textContent=modules[row.module_key]||row.module_key;item.append(title);
-      const status=document.createElement("p");status.textContent=row.enabled?(["artists","works"].includes(row.module_key)?"Activé — registre disponible":"Activé — métier à développer"):row.entitled?"Autorisé, désactivé":"Licence non attribuée ou expirée";item.append(status);
+      const status=document.createElement("p");status.textContent=row.enabled?(["artists","works","licenses"].includes(row.module_key)?"Activé — registre disponible":"Activé — métier à développer"):row.entitled?"Autorisé, désactivé":"Licence non attribuée ou expirée";item.append(status);
       if(admin&&(row.entitled||row.enabled)){const button=document.createElement("button");button.type="button";button.textContent=row.enabled?"Désactiver":"Activer";button.addEventListener("click",()=>run(async()=>{await api(tenantBase+"/modules/"+encodeURIComponent(row.module_key),"PUT",{enabled:!row.enabled},true);if(!token)return;await loadTenantModules(true);notice("Configuration enregistrée.");}));item.append(button);}
       if(row.module_key==="artists"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir le registre";open.addEventListener("click",()=>run(async()=>{resetArtists();el("artist-workspace").hidden=false;el("artist-form").hidden=!["admin","manager"].includes(identity?.role);await loadArtists(0);}));item.append(open);}
       if(row.module_key==="works"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir les œuvres";open.addEventListener("click",()=>run(async()=>{resetWorks();el("work-workspace").hidden=false;el("work-form").hidden=!["admin","manager"].includes(identity?.role);await loadWorks(0);}));item.append(open);}
+      if(row.module_key==="licenses"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir les licences";open.addEventListener("click",()=>run(openLicenses));item.append(open);}
       list.append(item);
     }
   }
@@ -209,6 +211,31 @@
     await api(workBase+"/"+encodeURIComponent(work.id)+"/rights","POST",{expected_version:rightsVersion,status:el("rights-status").value,shares},true);
     if(!token)return;await openRights(work);notice("Nouvelle version enregistrée.");
   });
+
+  let licenseOffset=0;
+  const operatorBase="/api/v1/operators",licenseBase="/api/v1/exploitation-licenses";
+  function resetLicenses(){licenseOffset=0;el("license-workspace").hidden=true;el("operator-list").replaceChildren();el("license-list").replaceChildren();el("operator-form").reset();el("license-form").reset();}
+  async function openLicenses(){resetLicenses();el("license-workspace").hidden=false;const write=["admin","manager"].includes(identity?.role);el("operator-form").hidden=!write;el("license-form").hidden=!write;await loadOperators();if(token)await loadLicenses(0);}
+  async function loadOperators(){
+    const rows=await api(operatorBase+"?limit=100","GET",undefined,true);if(!token)return;
+    const list=el("operator-list");list.replaceChildren();
+    for(const row of rows){const item=document.createElement("article");item.className="tenant-card";const title=document.createElement("strong");title.textContent=row.name+" · "+row.reference;item.append(title);const p=document.createElement("p");p.textContent=row.category+" · UUID : "+row.id;item.append(p);list.append(item);}
+    if(!rows.length||rows.length===100){const p=document.createElement("p");p.textContent=rows.length?"100 premiers exploitants affichés. Recherche complète disponible via API.":"Aucun exploitant.";list.append(p);}
+  }
+  async function loadLicenses(nextOffset=licenseOffset){
+    const rows=await api(licenseBase+"?limit=20&offset="+nextOffset,"GET",undefined,true);if(!token)return;
+    licenseOffset=nextOffset;const list=el("license-list");list.replaceChildren();
+    for(const row of rows){const item=document.createElement("article");item.className="tenant-card";const title=document.createElement("strong");title.textContent=row.reference+" · "+({draft:"Brouillon",active:"Active",revoked:"Révoquée"})[row.status];item.append(title);
+      for(const value of [row.territory+" · "+row.usage_type,row.starts_on+" — "+row.ends_on,row.effective?"En vigueur":"Hors vigueur","Exploitant : "+row.operator_id,row.work_id?"Œuvre : "+row.work_id:"Périmètre non documenté"]){const p=document.createElement("p");p.textContent=value;item.append(p);}
+      if(identity?.role==="admin"&&row.status!=="revoked"){for(const state of (row.status==="draft"?["active","revoked"]:["revoked"])){const button=document.createElement("button");button.type="button";button.textContent=state==="active"?"Activer":"Révoquer";button.addEventListener("click",()=>run(async()=>{if(!window.confirm("Confirmer cette modification de licence ?"))return;await api(licenseBase+"/"+encodeURIComponent(row.id)+"/status","PATCH",{status:state},true);if(!token)return;await loadLicenses();notice("Statut enregistré.");}));item.append(button);}}list.append(item);}
+    if(!rows.length){const p=document.createElement("p");p.textContent="Aucune licence sur cette page.";list.append(p);}
+    el("license-prev").disabled=licenseOffset===0;el("license-next").disabled=rows.length<20;el("license-page").textContent="Page "+(licenseOffset/20+1);
+  }
+  el("license-refresh").addEventListener("click",()=>run(async()=>{await loadOperators();if(token)await loadLicenses();}));
+  el("license-prev").addEventListener("click",()=>run(()=>loadLicenses(Math.max(0,licenseOffset-20))));
+  el("license-next").addEventListener("click",()=>run(()=>loadLicenses(licenseOffset+20)));
+  action("operator-form",async()=>{const data={reference:el("operator-reference").value,name:el("operator-name").value,category:el("operator-category").value,email:el("operator-email").value||null,phone:el("operator-phone").value||null};const result=await api(operatorBase,"POST",data,true);if(!token)return;el("operator-form").reset();el("license-operator").value=result.id;await loadOperators();notice("Exploitant créé.");});
+  action("license-form",async()=>{const data={reference:el("license-reference").value,operator_id:el("license-operator").value.trim(),work_id:el("license-work").value.trim()||null,territory:el("license-territory").value,usage_type:el("license-usage").value,starts_on:el("license-start").value,ends_on:el("license-end").value};await api(licenseBase,"POST",data,true);if(!token)return;el("license-form").reset();await loadLicenses(0);notice("Brouillon créé.");});
   el("saved").addEventListener("change",()=>el("finish").disabled=!el("saved").checked);
   el("finish").addEventListener("click",()=>{clearSession();show("login");notice("MFA activé. Reconnectez-vous avec un nouveau code TOTP.");});
   el("open-invite").addEventListener("click",()=>{if(!busy)show("invite");});

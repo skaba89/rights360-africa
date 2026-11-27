@@ -22,6 +22,8 @@ from app.works import router as works_router
 app.include_router(works_router)
 from app.rights_shares import router as rights_router
 app.include_router(rights_router)
+from app.exploitation import router as exploitation_router
+app.include_router(exploitation_router)
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def home():
