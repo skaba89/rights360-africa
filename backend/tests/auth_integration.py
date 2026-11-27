@@ -242,7 +242,22 @@ def main():
             status_url=lic_url+"/"+lic.json()["id"]+"/status"
             assert client.patch(status_url,headers=headers,json={"status":"active"}).status_code == 200
             assert client.get(lic_url,headers=headers).json()[0]["effective"] is True
+            tariff_data={"reference":"radio-rate","expected_version":0,"category":"radio","usage_type":"broadcast","method":"revenue","currency":"GNF","rate":500,"starts_on":"2020-01-01","ends_on":"2099-12-31"}
+            tariff=client.post("/api/v1/tariffs",headers=headers,json=tariff_data)
+            assert tariff.status_code == 201, tariff.text
+            tariff_id=tariff.json()["id"]
+            assert client.post("/api/v1/tariffs",headers=headers,json=tariff_data).status_code == 409
+            quote_url="/api/v1/tariffs/"+tariff_id+"/quote"
+            quote_data={"license_id":lic.json()["id"],"usage_date":"2026-01-01","revenue_minor":1000000}
+            estimate=client.post(quote_url,headers=headers,json=quote_data)
+            assert estimate.status_code == 200, estimate.text
+            assert estimate.json()["amount_minor"]=="50000"
+            assert client.post(quote_url,headers=headers,json={**quote_data,"usage_date":"2100-01-01"}).status_code == 409
+            assert client.post("/api/v1/tariffs",headers=headers,json={**tariff_data,"expected_version":1,"rate":600}).status_code == 201
+            assert client.post(quote_url,headers=headers,json=quote_data).json()["amount_minor"]=="50000"
+
             assert client.patch(status_url,headers=headers,json={"status":"revoked"}).status_code == 200
+            assert client.post(quote_url,headers=headers,json=quote_data).status_code == 409
             assert client.patch(status_url,headers=headers,json={"status":"active"}).status_code == 409
 
 
@@ -319,6 +334,7 @@ def main():
             from app.login_limits import bucket_key
             conn.execute(text("DELETE FROM login_buckets WHERE bucket IN (:account,:peer)"), {"account":bucket_key("account",email),"peer":bucket_key("peer","testclient")})
             conn.execute(text("DELETE FROM audit_events WHERE organization_id=:org"), {"org":org_a})
+            conn.execute(text("DELETE FROM tariffs WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM exploitation_licenses WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM operators WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM work_rights_shares WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
