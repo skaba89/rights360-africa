@@ -361,6 +361,28 @@ def main():
             assert sections["field_control"]["visits"]==1
             assert client.put("/api/v1/organization/modules/media",headers=headers,json={"enabled":False}).status_code==200
             assert "media" not in client.get(analytics_url,headers=headers).json()["sections"]
+            exchange_url="/api/v1/exchange"
+            exported=client.get(exchange_url+"/artists",headers=headers)
+            assert exported.status_code==200,exported.text
+            assert len(exported.json()["artists"])==1
+            assert "email" not in exported.json()["artists"][0]
+            exported_works=client.get(exchange_url+"/works",headers=headers).json()
+            assert len(exported_works["works"])==1
+            catalog={"schema_version":"rights360.catalog.v1","artists":[{"member_number":"IMPORT-001","legal_name":"Imported Artist"}],"works":[{"reference":"IMPORT-WORK","title":"Imported Work","category":"music","primary_member_number":"IMPORT-001"}]}
+            preview=client.post(exchange_url+"/import",headers=headers,json={"catalog":catalog})
+            assert preview.status_code==200,preview.text
+            assert preview.json()["new_artists"]==1 and preview.json()["new_works"]==1
+            assert preview.json()["committed"] is False
+            assert len(client.get(exchange_url+"/artists",headers=headers).json()["artists"])==1
+            imported=client.post(exchange_url+"/import",headers=headers,json={"catalog":catalog,"dry_run":False})
+            assert imported.status_code==200,imported.text
+            assert imported.json()["committed"] is True
+            repeat=client.post(exchange_url+"/import",headers=headers,json={"catalog":catalog,"dry_run":False}).json()
+            assert repeat["new_artists"]==0 and repeat["new_works"]==0
+            conflict_catalog={**catalog,"artists":[{"member_number":"IMPORT-001","legal_name":"Conflicting Artist"}]}
+            rejected=client.post(exchange_url+"/import",headers=headers,json={"catalog":conflict_catalog,"dry_run":False}).json()
+            assert rejected["valid"] is False and rejected["committed"] is False
+
 
 
 
