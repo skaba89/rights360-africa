@@ -40,6 +40,8 @@ jobs:
         run: |
           docker version
           docker compose version
+      - name: Generate ephemeral MFA key
+        run: echo "MFA_ENCRYPTION_KEY=$(openssl rand -base64 32 | tr '/+' '_-')" >> "$GITHUB_ENV"
       - name: Validate Compose
         run: docker compose config --quiet
       - name: Build image
