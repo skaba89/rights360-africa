@@ -62,6 +62,19 @@ jobs:
       - name: Authentication integration checks
         run: |
           docker compose run --rm --no-deps -T --user 0 -v "${PWD}/backend:/workspace:ro" -w /workspace migrate sh -c 'python -m pip install --no-cache-dir -r requirements-dev.txt && PYTHONPATH=/workspace python tests/auth_integration.py'
+      - name: Validate operations scripts and isolated restore
+        run: |
+          bash -n ops/*.sh
+          secret_dir=$(mktemp -d)
+          chmod 700 "$secret_dir"
+          trap 'rm -rf "$secret_dir"' EXIT
+          umask 077
+          printf 'POSTGRES_PASSWORD=%s\nRUNTIME_DB_PASSWORD=%s\nMFA_ENCRYPTION_KEY=%s\n' "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" "$MFA_ENCRYPTION_KEY" > "$secret_dir/rec.env"
+          bash ops/preflight.sh rec "$secret_dir/rec.env"
+          bash ops/preflight.sh prod "$secret_dir/rec.env"
+          docker compose exec -T db pg_dump -U rights360 -d rights360 -Fc > "$secret_dir/test.dump"
+          (cd "$secret_dir"; sha256sum test.dump > test.dump.sha256)
+          bash ops/verify-restore.sh "$secret_dir/test.dump"
       - name: Capture container diagnostics
         if: always()
         run: |
