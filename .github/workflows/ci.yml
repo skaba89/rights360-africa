@@ -31,6 +31,7 @@ jobs:
   docker:
     env:
       POSTGRES_PASSWORD: ci-ephemeral-only
+      RUNTIME_DB_PASSWORD: ci-runtime-ephemeral-distinct-only
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -51,6 +52,8 @@ jobs:
         run: curl --fail --silent --show-error http://127.0.0.1:8500/readyz
       - name: Verify migration
         run: docker compose exec -T db psql -U rights360 -d rights360 -v ON_ERROR_STOP=1 -c 'SELECT id, slug, name FROM organizations LIMIT 0;'
+      - name: Tenant isolation checks
+        run: docker compose exec -T db psql -U rights360 -d rights360 -v ON_ERROR_STOP=1 < backend/tests/tenant_isolation.sql
       - name: Capture container diagnostics
         if: always()
         run: |
