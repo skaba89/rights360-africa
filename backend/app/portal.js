@@ -1,6 +1,7 @@
 "use strict";
 (() => {
   const el = id => document.getElementById(id);
+  document.documentElement.dataset.busy="false";
   const views = ["login","invite","mfa","recovery","session","platform","institution"];
   let token = null, timer = null, busy = false, selected = null, offset = 0, organizations = [], memberOffset = 0, identity = null, artistOffset = 0, editingArtist = null, workOffset = 0, editingWork = null;
   function notice(message="",error=false){el("notice").textContent=message;el("notice").classList.toggle("error",error);}
@@ -14,7 +15,7 @@
     if(!response.ok){const messages={400:"Invitation invalide ou expirée.",401:"Identifiants, code de sécurité ou session invalides.",403:"Accès refusé.",409:"Cette opération est déjà effectuée ou incompatible.",422:"Vérifiez les informations saisies.",429:"Trop de tentatives. Réessayez dans une minute."};const error=new Error(messages[response.status]||"Service indisponible. Réessayez ultérieurement.");error.status=response.status;throw error;}
     return response.status===204?null:response.json();
   }
-  function action(form,handler){el(form).addEventListener("submit",async e=>{e.preventDefault();if(busy)return;busy=true;const button=e.currentTarget.querySelector("button[type=submit]");button.disabled=true;notice();try{await handler();}catch(err){notice(err.message||"Erreur de connexion.",true);}finally{busy=false;button.disabled=false;e.target.querySelectorAll('input[type="password"],input[autocomplete="one-time-code"]').forEach(i=>i.value="");}});}
+  function action(form,handler){el(form).addEventListener("submit",async e=>{e.preventDefault();if(busy)return;busy=true;document.documentElement.dataset.busy="true";const button=e.currentTarget.querySelector("button[type=submit]");button.disabled=true;notice();try{await handler();}catch(err){notice(err.message||"Erreur de connexion.",true);}finally{busy=false;document.documentElement.dataset.busy="false";button.disabled=false;e.target.querySelectorAll('input[type="password"],input[autocomplete="one-time-code"]').forEach(i=>i.value="");}});}
   action("login-form",async()=>{
     const data={organization_id:el("org").value.trim(),email:el("email").value.trim(),password:el("password").value};
     if(el("code").value.trim())data[el("factor").value]=el("code").value.trim();
@@ -57,7 +58,7 @@
     }
   }
   async function selectOrganization(org){selected=org;hideInvitation();el("grant-form").reset();el("platform-invite").reset();el("detail-name").textContent=org.name;el("detail-id").textContent=org.id;el("change-status").textContent=org.active?"Suspendre l’organisation":"Réactiver l’organisation";el("org-detail").hidden=false;el("entitlement-list").replaceChildren();await loadEntitlements();}
-  async function run(handler){if(busy||!token)return;busy=true;notice();try{await handler();}catch(err){if(err.status===401){clearSession();show("login");}notice(err.message,true);}finally{busy=false;}}
+  async function run(handler){if(busy||!token)return;busy=true;document.documentElement.dataset.busy="true";notice();try{await handler();}catch(err){if(err.status===401){clearSession();show("login");}notice(err.message,true);}finally{busy=false;document.documentElement.dataset.busy="false";}}
   el("open-platform").addEventListener("click",()=>run(async()=>{await api("/api/v1/platform/me","GET",undefined,true);if(!token)return;show("platform");await loadOrganizations(0);}));
   el("back-profile").addEventListener("click",()=>{if(!busy){hideInvitation();show("session");}});
   el("refresh-orgs").addEventListener("click",()=>run(()=>loadOrganizations()));
@@ -72,7 +73,7 @@
   const tenantBase="/api/v1/organization";
   const roles={admin:"Administrateur",manager:"Gestionnaire",auditor:"Auditeur",artist:"Artiste"};
   function hideMemberInvitation(){el("member-invite-token").textContent="";el("member-invite-id").textContent="";el("member-invite-result").hidden=true;}
-  function resetInstitution(){resetExchange();resetAnalytics();resetMedia();resetField();resetPayouts();resetAccounting();resetDistribution();resetBilling();resetTariffs();resetLicenses();resetWorks();resetArtists();identity=null;memberOffset=0;hideMemberInvitation();for(const id of ["institution-name","institution-role","institution-module-list","member-list","member-page"])el(id).replaceChildren();el("institution-modules").hidden=true;el("institution-members").hidden=true;}
+  function resetInstitution(){resetDocuments();resetExchange();resetAnalytics();resetMedia();resetField();resetPayouts();resetAccounting();resetDistribution();resetBilling();resetTariffs();resetLicenses();resetWorks();resetArtists();identity=null;memberOffset=0;hideMemberInvitation();for(const id of ["institution-name","institution-role","institution-module-list","member-list","member-page"])el(id).replaceChildren();el("institution-modules").hidden=true;el("institution-members").hidden=true;}
   async function loadInstitution(){
     const me=await api("/api/v1/auth/me","GET",undefined,true);if(!token)return;
     if(me.mfa_required){identity=null;show("mfa");return;}
@@ -92,6 +93,7 @@
     const list=el("institution-module-list");list.replaceChildren();
     const artistEnabled=rows.some(row=>row.module_key==="artists"&&row.enabled);
     if(!artistEnabled)resetArtists();
+    if(!rows.some(row=>row.module_key==="documents"&&row.enabled))resetDocuments();
     if(!artistEnabled||!rows.some(row=>row.module_key==="works"&&row.enabled))resetExchange();
     if(!rows.some(row=>row.module_key==="analytics"&&row.enabled))resetAnalytics();
     if(!rows.some(row=>row.module_key==="media"&&row.enabled))resetMedia();
@@ -103,7 +105,7 @@
     for(const row of rows){
       const item=document.createElement("article");item.className="tenant-card";
       const title=document.createElement("strong");title.textContent=modules[row.module_key]||row.module_key;item.append(title);
-      const status=document.createElement("p");status.textContent=row.enabled?(["artists","works","licenses","finance","royalties","field_control","media","analytics"].includes(row.module_key)?"Activé — registre disponible":"Activé — métier à développer"):row.entitled?"Autorisé, désactivé":"Licence non attribuée ou expirée";item.append(status);
+      const status=document.createElement("p");status.textContent=row.enabled?(["artists","works","licenses","finance","royalties","field_control","media","analytics","documents"].includes(row.module_key)?"Activé — registre disponible":"Activé — métier à développer"):row.entitled?"Autorisé, désactivé":"Licence non attribuée ou expirée";item.append(status);
       if(admin&&(row.entitled||row.enabled)){const button=document.createElement("button");button.type="button";button.textContent=row.enabled?"Désactiver":"Activer";button.addEventListener("click",()=>run(async()=>{await api(tenantBase+"/modules/"+encodeURIComponent(row.module_key),"PUT",{enabled:!row.enabled},true);if(!token)return;await loadTenantModules(true);notice("Configuration enregistrée.");}));item.append(button);}
       if(row.module_key==="artists"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir le registre";open.addEventListener("click",()=>run(async()=>{resetArtists();el("artist-workspace").hidden=false;el("artist-form").hidden=!["admin","manager"].includes(identity?.role);await loadArtists(0);}));item.append(open);}
       if(row.module_key==="works"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir les œuvres";open.addEventListener("click",()=>run(async()=>{resetWorks();el("work-workspace").hidden=false;el("work-form").hidden=!["admin","manager"].includes(identity?.role);await loadWorks(0);}));item.append(open);}
@@ -117,6 +119,7 @@
       if(row.module_key==="media"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Media Intelligence";open.addEventListener("click",()=>run(openMedia));item.append(open);}
       if(row.module_key==="analytics"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Tableau de bord décisionnel";open.addEventListener("click",()=>run(openAnalytics));item.append(open);}
       if(row.module_key==="works"&&row.enabled&&artistEnabled){const open=document.createElement("button");open.type="button";open.textContent="Échanges de répertoires";open.addEventListener("click",()=>run(openExchange));item.append(open);}
+      if(row.module_key==="documents"&&row.enabled&&["admin","manager","auditor"].includes(identity?.role)){const open=document.createElement("button");open.type="button";open.textContent="Gestion documentaire";open.addEventListener("click",()=>run(openDocuments));item.append(open);}
       list.append(item);
     }
   }
@@ -429,10 +432,24 @@
   }
   el("acoustic-enroll").addEventListener("click",()=>run(()=>acousticRequest(true)));
   el("acoustic-match").addEventListener("click",()=>run(()=>acousticRequest(false)));
+  const documentsBase="/api/v1/documents";
+  let documentsOffset=0,selectedDocument=null;
+  function resetDocuments(){documentsOffset=0;selectedDocument=null;el("documents-workspace").hidden=true;el("documents-detail").hidden=true;el("documents-list").replaceChildren();el("documents-versions").replaceChildren();el("documents-form").reset();el("documents-upload").reset();el("documents-selected").textContent="";}
+  async function openDocuments(){resetDocuments();el("documents-workspace").hidden=false;el("documents-form").hidden=!["admin","manager"].includes(identity?.role);await loadDocuments(0);}
+  async function loadDocuments(offset){const session=token;const rows=await api(documentsBase+"?limit=50&offset="+offset,"GET",undefined,true);if(!token||token!==session)return;documentsOffset=offset;const list=el("documents-list");list.replaceChildren();for(const row of rows){const button=document.createElement("button");button.type="button";button.textContent=row.title+" — "+row.category+" — "+(row.archived_at?"archivé":"actif")+" — "+(row.latest_version??0)+" version(s)";button.addEventListener("click",()=>run(()=>openDocument(row)));list.append(button);}el("documents-prev").disabled=offset===0;el("documents-next").disabled=rows.length<50;}
+  async function openDocument(row){const session=token;const versions=await api(documentsBase+"/"+row.id+"/versions","GET",undefined,true);if(!token||token!==session)return;selectedDocument={...row,latest_version:versions[0]?.version??0};el("documents-detail").hidden=false;el("documents-selected").textContent=row.title;el("documents-upload").hidden=!!row.archived_at||!["admin","manager"].includes(identity?.role);el("documents-archive").hidden=!!row.archived_at||identity?.role!=="admin";el("documents-upload").reset();const list=el("documents-versions");list.replaceChildren();for(const v of versions){const button=document.createElement("button");button.type="button";button.textContent="Télécharger v"+v.version+" — "+v.size_bytes+" octets — SHA256 "+v.sha256;button.addEventListener("click",()=>run(()=>downloadDocument(row.id,v.version)));list.append(button);}}
+  async function rawDocumentRequest(path,options){const session=token;const response=await fetch(path,{...options,headers:{...options.headers,Authorization:"Bearer "+session},cache:"no-store",credentials:"omit",redirect:"error"});if(!token||token!==session)throw Error("Session terminée.");if(!response.ok){const error=new Error("Erreur documentaire HTTP "+response.status);error.status=response.status;throw error;}return response;}
+  async function downloadDocument(id,version){const session=token;const response=await rawDocumentRequest(documentsBase+"/"+id+"/versions/"+version+"/content",{method:"GET"});const blob=await response.blob();if(!token||token!==session)return;const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="document-"+id+"-v"+version+".pdf";document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+  el("documents-refresh").addEventListener("click",()=>run(()=>loadDocuments(documentsOffset)));
+  el("documents-prev").addEventListener("click",()=>run(()=>loadDocuments(Math.max(0,documentsOffset-50))));
+  el("documents-next").addEventListener("click",()=>run(()=>loadDocuments(documentsOffset+50)));
+  action("documents-form",async()=>{const data={title:el("documents-title").value,category:el("documents-category").value};const subject=el("documents-subject").value;const id=el("documents-subject-id").value.trim();if(Boolean(subject)!==Boolean(id))throw Error("Renseigner le type et l’UUID ensemble.");if(subject)data[subject]=id;const row=await api(documentsBase,"POST",data,true);if(!token)return;el("documents-form").reset();await loadDocuments(0);await openDocument(row);});
+  action("documents-upload",async()=>{const row=selectedDocument,file=el("documents-file").files[0];if(!row||!file||file.size>2097152)throw Error("Choisir un PDF de 2 Mio maximum.");await rawDocumentRequest(documentsBase+"/"+row.id+"/versions?expected_version="+row.latest_version,{method:"POST",headers:{"Content-Type":"application/pdf"},body:file});if(token){await loadDocuments(documentsOffset);await openDocument(row);}});
+  el("documents-archive").addEventListener("click",()=>run(async()=>{const row=selectedDocument;if(!row||!window.confirm("Archiver ce document ? Les versions resteront consultables."))return;const result=await api(documentsBase+"/"+row.id+"/archive","POST",undefined,true);if(token){await loadDocuments(documentsOffset);await openDocument({...row,archived_at:result.archived_at});}}));
   el("saved").addEventListener("change",()=>el("finish").disabled=!el("saved").checked);
   el("finish").addEventListener("click",()=>{clearSession();show("login");notice("MFA activé. Reconnectez-vous avec un nouveau code TOTP.");});
   el("open-invite").addEventListener("click",()=>{if(!busy)show("invite");});
   el("enable-mfa").addEventListener("click",()=>show("mfa"));
   document.querySelectorAll("[data-back]").forEach(b=>b.addEventListener("click",()=>{if(!busy){el("invite-form").reset();show("login");}}));
-  document.querySelectorAll("[data-logout]").forEach(b=>b.addEventListener("click",async()=>{if(busy)return;busy=true;let failed=false;try{await api("/api/v1/auth/logout","POST",undefined,true);}catch{failed=true;}finally{clearSession();show("login");busy=false;notice(failed?"Session locale fermée. La révocation serveur n’a pas pu être confirmée.":"Vous êtes déconnecté.",failed);}}));
+  document.querySelectorAll("[data-logout]").forEach(b=>b.addEventListener("click",async()=>{if(busy)return;busy=true;document.documentElement.dataset.busy="true";let failed=false;try{await api("/api/v1/auth/logout","POST",undefined,true);}catch{failed=true;}finally{clearSession();show("login");busy=false;document.documentElement.dataset.busy="false";notice(failed?"Session locale fermée. La révocation serveur n’a pas pu être confirmée.":"Vous êtes déconnecté.",failed);}}));
 })();

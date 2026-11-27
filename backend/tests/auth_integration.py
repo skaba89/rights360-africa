@@ -399,6 +399,31 @@ def main():
             conflict_catalog={**catalog,"artists":[{"member_number":"IMPORT-001","legal_name":"Conflicting Artist"}]}
             rejected=client.post(exchange_url+"/import",headers=headers,json={"catalog":conflict_catalog,"dry_run":False}).json()
             assert rejected["valid"] is False and rejected["committed"] is False
+            doc_url="/api/v1/documents"
+            assert client.get(doc_url,headers=headers).status_code==403
+            with admin.begin() as conn:
+                conn.execute(text("INSERT INTO module_entitlements(organization_id,module_key,granted) VALUES (:org,'documents',true) ON CONFLICT (organization_id,module_key) DO UPDATE SET granted=true,expires_at=NULL"),{"org":org_a})
+                conn.execute(text("INSERT INTO tenant_modules(organization_id,module_key,enabled) VALUES (:org,'documents',true) ON CONFLICT (organization_id,module_key) DO UPDATE SET enabled=true"),{"org":org_a})
+            assert client.post(doc_url,headers=headers,json={"title":"Outside","category":"supporting","artist_id":str(foreign_id)}).status_code==404
+            document=client.post(doc_url,headers=headers,json={"title":"Test contract","category":"contract","work_id":work_id})
+            assert document.status_code==201,document.text
+            doc_path=doc_url+"/"+document.json()["id"]
+            pdf_headers={**headers,"Content-Type":"application/pdf"}
+            pdf=b"%PDF-1.4\nsynthetic test envelope\n%%EOF"
+            assert client.post(doc_path+"/versions?expected_version=0",headers=pdf_headers,content=b"invalid").status_code==422
+            version=client.post(doc_path+"/versions?expected_version=0",headers=pdf_headers,content=pdf)
+            assert version.status_code==201,version.text
+            assert version.json()["version"]==1
+            assert client.post(doc_path+"/versions?expected_version=1",headers=pdf_headers,content=pdf).status_code==409
+            assert client.post(doc_path+"/versions?expected_version=0",headers=pdf_headers,content=pdf+b" ").status_code==409
+            download=client.get(doc_path+"/versions/1/content",headers=headers)
+            assert download.status_code==200 and download.content==pdf
+            assert download.headers["content-disposition"].startswith("attachment")
+            assert len(client.get(doc_path+"/versions",headers=headers).json())==1
+            assert client.post(doc_path+"/archive",headers=headers).status_code==201
+            assert client.post(doc_path+"/versions?expected_version=1",headers=pdf_headers,content=pdf+b" ").status_code==409
+            assert client.get(doc_url,headers=headers).json()[0]["archived_at"] is not None
+
 
 
 
@@ -496,6 +521,8 @@ def main():
             conn.execute(text("DELETE FROM royalty_invoices WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM tariffs WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM exploitation_licenses WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
+            for table in ("document_archives","document_versions","documents"):
+                conn.execute(text(f"DELETE FROM {table} WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM acoustic_references WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM media_reviews WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM media_observations WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})

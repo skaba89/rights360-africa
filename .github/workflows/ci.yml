@@ -81,6 +81,14 @@ jobs:
           npm install --prefix /tmp/rights360-browser --no-audit --no-fund playwright@1.56.1
           /tmp/rights360-browser/node_modules/.bin/playwright install chromium
           NODE_PATH=/tmp/rights360-browser/node_modules node backend/tests/offline_browser.cjs
+      - name: Authenticated business browser E2E
+        timeout-minutes: 4
+        run: |
+          umask 077
+          fixture=$(mktemp)
+          trap 'rm -f "$fixture"' EXIT
+          docker compose run --rm --no-deps -T -e RIGHTS360_DISPOSABLE_E2E=1 -v "${PWD}/backend:/workspace:ro" -w /workspace migrate sh -c 'PYTHONPATH=/workspace python tests/seed_browser_e2e.py' > "$fixture"
+          RIGHTS360_E2E_FIXTURE="$fixture" NODE_PATH=/tmp/rights360-browser/node_modules node backend/tests/business_browser.cjs
       - name: Capture container diagnostics
         if: always()
         run: |
