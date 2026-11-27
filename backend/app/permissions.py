@@ -2,9 +2,9 @@ from fastapi import Depends, HTTPException
 from app.auth import current_identity
 
 PERMISSIONS = {
-    "admin": frozenset({"organization:read", "modules:read", "modules:write", "members:read", "members:write", "artists:read", "artists:write"}),
-    "manager": frozenset({"organization:read", "modules:read", "artists:read", "artists:write"}),
-    "auditor": frozenset({"organization:read", "modules:read", "artists:read"}),
+    "admin": frozenset({"organization:read", "modules:read", "modules:write", "members:read", "members:write", "artists:read", "artists:write", "works:read", "works:write"}),
+    "manager": frozenset({"organization:read", "modules:read", "artists:read", "artists:write", "works:read", "works:write"}),
+    "auditor": frozenset({"organization:read", "modules:read", "artists:read", "works:read"}),
     "artist": frozenset({"organization:read"}),
 }
 
