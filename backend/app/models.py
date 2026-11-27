@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy import BigInteger, Identity, func, Boolean, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, String, Text, Uuid, false, true
+from sqlalchemy import BigInteger, Integer, Identity, func, Boolean, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, String, Text, Uuid, false, true
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 class Base(DeclarativeBase):
@@ -51,3 +51,9 @@ class AuditEvent(Base):
     resource_key: Mapped[str] = mapped_column(String(100), nullable=False)
     details: Mapped[dict] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+class LoginBucket(Base):
+    __tablename__ = "login_buckets"
+    bucket: Mapped[str] = mapped_column(String(80), primary_key=True)
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False)
