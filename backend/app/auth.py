@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from app.db import get_engine
 from app.login_limits import reserve_login
-from app.mfa import consume_code
+from app.mfa import consume_code, cipher, new_secret
 
 router = APIRouter(prefix="/api/v1/auth", tags=["authentication"])
 hasher = PasswordHasher()
@@ -82,3 +82,41 @@ def logout(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
         with get_engine().begin() as conn:
             conn.execute(text("DELETE FROM auth_sessions WHERE token_hash=:token"), {"token":digest(credentials.credentials)})
     return Response(status_code=204, headers={"Cache-Control":"no-store"})
+
+class MFASetup(BaseModel):
+    password: str = Field(min_length=1,max_length=256)
+
+class MFAConfirm(MFASetup):
+    otp: str = Field(min_length=6,max_length=6)
+
+def lock_and_verify(conn, identity, password):
+    row = conn.execute(text("SELECT password_hash FROM accounts WHERE id=:id AND active FOR UPDATE"), {"id":identity["account_id"]}).scalar_one_or_none()
+    if not row or not verify_password(row,password):
+        raise invalid()
+
+@router.post("/mfa/setup")
+def setup_mfa(payload: MFASetup, request: Request, response: Response, identity=Depends(current_identity)):
+    reserve_login(identity["email"],identity["organization_id"],request.client.host if request.client else "unknown")
+    with get_engine().begin() as conn:
+        lock_and_verify(conn,identity,payload.password)
+        enabled = conn.execute(text("SELECT enabled FROM account_mfa WHERE account_id=:id"), {"id":identity["account_id"]}).scalar_one_or_none()
+        if enabled:
+            raise HTTPException(status_code=409,detail="MFA already enabled")
+        secret = new_secret()
+        conn.execute(text("""INSERT INTO account_mfa(account_id,secret_ciphertext,last_step,enabled)
+            VALUES (:id,:secret,-1,false) ON CONFLICT(account_id) DO UPDATE SET secret_ciphertext=EXCLUDED.secret_ciphertext,last_step=-1"""),
+            {"id":identity["account_id"],"secret":cipher().encrypt(secret.encode()).decode()})
+    response.headers["Cache-Control"]="no-store"
+    return {"secret":secret}
+
+@router.post("/mfa/confirm")
+def confirm_mfa(payload: MFAConfirm, request: Request, response: Response, identity=Depends(current_identity)):
+    reserve_login(identity["email"],identity["organization_id"],request.client.host if request.client else "unknown")
+    with get_engine().begin() as conn:
+        lock_and_verify(conn,identity,payload.password)
+        if not consume_code(conn,identity["account_id"],payload.otp,require_enabled=False):
+            raise invalid()
+        conn.execute(text("UPDATE account_mfa SET enabled=true WHERE account_id=:id"),{"id":identity["account_id"]})
+        conn.execute(text("DELETE FROM auth_sessions WHERE account_id=:id"),{"id":identity["account_id"]})
+    response.headers["Cache-Control"]="no-store"
+    return {"enabled":True,"reauthenticate":True}
