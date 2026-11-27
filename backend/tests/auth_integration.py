@@ -42,6 +42,42 @@ def main():
             with admin.begin() as conn:
                 conn.execute(text("UPDATE memberships SET active=false WHERE account_id=:id"), {"id":account})
             assert client.get("/api/v1/auth/me",headers=headers).status_code == 401
+            # Exercise MFA with a separate account to isolate rate limits.
+            mfa_account = uuid4()
+            mfa_email = f"{mfa_account}@example.invalid"
+            import pyotp
+            import time
+            from app.mfa import cipher
+            with admin.begin() as conn:
+                conn.execute(text("INSERT INTO accounts(id,email,password_hash) VALUES (:id,:email,:hash)"), {"id":mfa_account,"email":mfa_email,"hash":hasher.hash(password)})
+                conn.execute(text("INSERT INTO memberships(account_id,organization_id,role) VALUES (:id,:org,'admin')"), {"id":mfa_account,"org":org_a})
+            try:
+                mfa_payload = {"email":mfa_email,"password":password,"organization_id":str(org_a)}
+                logged = client.post("/api/v1/auth/login",json=mfa_payload)
+                assert logged.status_code == 200
+                mfa_headers = {"Authorization":"Bearer "+logged.json()["access_token"]}
+                setup = client.post("/api/v1/auth/mfa/setup",headers=mfa_headers,json={"password":password})
+                assert setup.status_code == 200
+                secret = setup.json()["secret"]
+                with admin.begin() as conn:
+                    encrypted = conn.execute(text("SELECT secret_ciphertext FROM account_mfa WHERE account_id=:id"), {"id":mfa_account}).scalar_one()
+                    assert encrypted != secret
+                    assert cipher().decrypt(encrypted.encode()).decode() == secret
+                totp = pyotp.TOTP(secret)
+                step = int(time.time() // 30)
+                confirmed = client.post("/api/v1/auth/mfa/confirm",headers=mfa_headers,json={"password":password,"otp":totp.at((step-1)*30)})
+                assert confirmed.status_code == 200, confirmed.text
+                assert client.get("/api/v1/auth/me",headers=mfa_headers).status_code == 401
+                assert client.post("/api/v1/auth/login",json=mfa_payload).status_code == 401
+                code = totp.at(step*30)
+                assert client.post("/api/v1/auth/login",json={**mfa_payload,"otp":code}).status_code == 200
+                assert client.post("/api/v1/auth/login",json={**mfa_payload,"otp":code}).status_code == 401
+            finally:
+                with admin.begin() as conn:
+                    conn.execute(text("DELETE FROM memberships WHERE account_id=:id"), {"id":mfa_account})
+                    conn.execute(text("DELETE FROM accounts WHERE id=:id"), {"id":mfa_account})
+                    from app.login_limits import bucket_key
+                    conn.execute(text("DELETE FROM login_buckets WHERE bucket=:key"), {"key":bucket_key("account",mfa_email)})
             # Seed the current window at its threshold to avoid clock-boundary flakiness.
             from app.login_limits import bucket_key
             with admin.begin() as conn:
