@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from app.db import get_engine
 from app.login_limits import reserve_login
+from app.mfa import consume_code
 
 router = APIRouter(prefix="/api/v1/auth", tags=["authentication"])
 hasher = PasswordHasher()
@@ -20,6 +21,7 @@ class Login(BaseModel):
     email: str = Field(min_length=3, max_length=254)
     password: str = Field(min_length=1, max_length=256)
     organization_id: UUID
+    otp: str | None = Field(default=None, max_length=6)
 
 def digest(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
@@ -57,6 +59,10 @@ def login(payload: Login, response: Response, request: Request):
         """), {"email":payload.email.strip().lower(),"org":payload.organization_id}).mappings().first()
         valid = verify_password(account["password_hash"] if account else dummy_hash, payload.password)
         if not account or not valid:
+            raise invalid()
+        conn.execute(text("SELECT id FROM accounts WHERE id=:id FOR UPDATE"), {"id":account["id"]})
+        enabled = conn.execute(text("SELECT enabled FROM account_mfa WHERE account_id=:id"), {"id":account["id"]}).scalar_one_or_none()
+        if enabled and not consume_code(conn, account["id"], payload.otp):
             raise invalid()
         token = secrets.token_urlsafe(48)
         conn.execute(text("DELETE FROM auth_sessions WHERE account_id=:account AND expires_at<=now()"), {"account":account["id"]})
