@@ -1,5 +1,5 @@
 "use strict";
-const CACHE="rights360-field-shell-v1";
+const CACHE="rights360-field-shell-v2";
 const SHELL=["/portal","/portal.css","/portal.js","/offline.js","/field-manifest.json","/field-icon.svg"];
 self.addEventListener("install",event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL))));
 self.addEventListener("activate",event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith("rights360-field-shell-")&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
