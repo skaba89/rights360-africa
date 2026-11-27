@@ -365,3 +365,14 @@ class MediaReview(Base):
     decision: Mapped[str] = mapped_column(String(20),nullable=False)
     reviewed_by: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
     reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False,server_default=func.now())
+
+class AcousticReference(Base):
+    __tablename__ = "acoustic_references"
+    __table_args__ = (ForeignKeyConstraint(["organization_id","work_id"],["works.organization_id","works.id"]),UniqueConstraint("organization_id","audio_sha256",name="acoustic_digest_unique"))
+    id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    work_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    audio_sha256: Mapped[str] = mapped_column(String(64),nullable=False)
+    signature: Mapped[list] = mapped_column(JSON,nullable=False)
+    created_by: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False,server_default=func.now())
