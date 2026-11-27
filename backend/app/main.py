@@ -38,6 +38,8 @@ from app.field_control import router as field_router
 app.include_router(field_router)
 from app.media import router as media_router
 app.include_router(media_router)
+from app.analytics import router as analytics_router
+app.include_router(analytics_router)
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def home():
