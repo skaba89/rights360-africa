@@ -1,11 +1,11 @@
 "use strict";
 (() => {
   const el = id => document.getElementById(id);
-  const views = ["login","invite","mfa","recovery","session","platform"];
-  let token = null, timer = null, busy = false, selected = null, offset = 0, organizations = [];
+  const views = ["login","invite","mfa","recovery","session","platform","institution"];
+  let token = null, timer = null, busy = false, selected = null, offset = 0, organizations = [], memberOffset = 0, identity = null;
   function notice(message="",error=false){el("notice").textContent=message;el("notice").classList.toggle("error",error);}
   function show(view){views.forEach(v=>{el(v+"-view").hidden=v!==view;});notice();}
-  function clearSession(){resetPlatform();token=null;clearTimeout(timer);timer=null;el("secret").textContent="";el("recovery").textContent="";el("saved").checked=false;el("finish").disabled=true;el("confirm-form").hidden=true;el("setup-form").hidden=false;document.querySelectorAll("form").forEach(f=>f.reset());}
+  function clearSession(){resetInstitution();resetPlatform();token=null;clearTimeout(timer);timer=null;el("secret").textContent="";el("recovery").textContent="";el("saved").checked=false;el("finish").disabled=true;el("confirm-form").hidden=true;el("setup-form").hidden=false;document.querySelectorAll("form").forEach(f=>f.reset());}
   async function api(path,method="GET",data,authorized=false){
     const headers={Accept:"application/json"};
     if(data!==undefined)headers["Content-Type"]="application/json";
@@ -22,6 +22,7 @@
     clearTimeout(timer);timer=setTimeout(()=>{clearSession();show("login");notice("Session expirée. Reconnectez-vous.",true);},result.expires_in*1000);
     try{const me=await api("/api/v1/auth/me","GET",undefined,true);
       if(me.mfa_required){show("mfa");return;}
+      identity=me;
       el("session-email").textContent=me.email;el("session-org").textContent=me.organization_id;el("session-role").textContent=({admin:"Administrateur",manager:"Gestionnaire",auditor:"Auditeur",artist:"Artiste"})[me.role]||me.role;el("session-mfa").textContent=me.mfa_enabled?"Activé":"Non activé";el("enable-mfa").hidden=me.mfa_enabled;el("open-platform").hidden=true;show("session");if(me.role==="admin"&&me.mfa_enabled){try{await api("/api/v1/platform/me","GET",undefined,true);if(token)el("open-platform").hidden=false;}catch(err){if(err.status!==403)notice("Vérification de l’accès DSIG indisponible.",true);}}
     }catch(err){clearSession();show("login");throw err;}
   });
@@ -67,6 +68,63 @@
   el("change-status").addEventListener("click",()=>run(async()=>{if(!selected)return;const org=selected;if(!window.confirm((org.active?"Suspendre ":"Réactiver ")+org.name+" ?"))return;const result=await api(base+"/"+org.id+"/status","PATCH",{active:!org.active},true);if(!token)return;await loadOrganizations();await selectOrganization({...org,active:result.active});notice("Statut mis à jour.");}));
   action("grant-form",async()=>{if(!selected)return;const expiry=el("grant-expiry").value;const granted=el("grant-status").value==="true";await api(base+"/"+selected.id+"/entitlements/"+el("module-key").value,"PUT",{granted,expires_at:expiry?new Date(expiry).toISOString():null},true);if(!token)return;await loadEntitlements();notice("Autorisation enregistrée.");});
   action("platform-invite",async()=>{if(!selected)return;hideInvitation();const result=await api(base+"/"+selected.id+"/invitations","POST",{email:el("admin-email").value.trim()},true);if(!token)return;el("invitation-token").textContent=result.token;el("invitation-result").hidden=false;el("platform-invite").reset();notice("Invitation créée. Aucun email n’a été envoyé automatiquement.");});
+
+  const tenantBase="/api/v1/organization";
+  const roles={admin:"Administrateur",manager:"Gestionnaire",auditor:"Auditeur",artist:"Artiste"};
+  function hideMemberInvitation(){el("member-invite-token").textContent="";el("member-invite-id").textContent="";el("member-invite-result").hidden=true;}
+  function resetInstitution(){identity=null;memberOffset=0;hideMemberInvitation();for(const id of ["institution-name","institution-role","institution-module-list","member-list","member-page"])el(id).replaceChildren();el("institution-modules").hidden=true;el("institution-members").hidden=true;}
+  async function loadInstitution(){
+    const me=await api("/api/v1/auth/me","GET",undefined,true);if(!token)return;
+    if(me.mfa_required){identity=null;show("mfa");return;}
+    identity=me;
+    const org=await api(tenantBase,"GET",undefined,true);if(!token)return;
+    el("institution-name").textContent=org.name;el("institution-role").textContent=roles[me.role]||me.role;
+    const admin=me.role==="admin"&&me.mfa_enabled;
+    el("institution-modules").hidden=!["admin","manager","auditor"].includes(me.role);
+    el("institution-members").hidden=!admin;
+    el("institution-module-list").replaceChildren();el("member-list").replaceChildren();
+    show("institution");
+    if(!el("institution-modules").hidden)await loadTenantModules(admin);
+    if(admin&&token)await loadMembers(0);
+  }
+  async function loadTenantModules(admin){
+    const rows=await api(tenantBase+"/modules","GET",undefined,true);if(!token)return;
+    const list=el("institution-module-list");list.replaceChildren();
+    for(const row of rows){
+      const item=document.createElement("article");item.className="tenant-card";
+      const title=document.createElement("strong");title.textContent=modules[row.module_key]||row.module_key;item.append(title);
+      const status=document.createElement("p");status.textContent=row.enabled?"Activé — métier à développer":row.entitled?"Autorisé, désactivé":"Licence non attribuée ou expirée";item.append(status);
+      if(admin&&(row.entitled||row.enabled)){const button=document.createElement("button");button.type="button";button.textContent=row.enabled?"Désactiver":"Activer";button.addEventListener("click",()=>run(async()=>{await api(tenantBase+"/modules/"+encodeURIComponent(row.module_key),"PUT",{enabled:!row.enabled},true);if(!token)return;await loadTenantModules(true);notice("Configuration enregistrée.");}));item.append(button);}
+      list.append(item);
+    }
+  }
+  async function loadMembers(nextOffset=memberOffset){
+    const rows=await api(tenantBase+"/members?limit=20&offset="+nextOffset,"GET",undefined,true);if(!token)return;
+    memberOffset=nextOffset;const list=el("member-list");list.replaceChildren();
+    if(!rows.length){const p=document.createElement("p");p.textContent="Aucun collaborateur sur cette page.";list.append(p);}
+    for(const row of rows){
+      const item=document.createElement("article");item.className="tenant-card";
+      const title=document.createElement("strong");title.textContent=row.email;item.append(title);
+      const info=document.createElement("p");info.textContent=(roles[row.role]||row.role)+" · "+(row.active?"Actif":"Suspendu")+" · MFA "+(row.mfa_enabled?"activé":"non activé");item.append(info);
+      if(row.role!=="admin"&&row.account_id!==identity?.account_id){
+        const select=document.createElement("select");select.setAttribute("aria-label","Rôle de "+row.email);
+        for(const key of ["manager","auditor","artist"]){const option=document.createElement("option");option.value=key;option.textContent=roles[key];select.append(option);}select.value=row.role;
+        const save=document.createElement("button");save.type="button";save.textContent="Enregistrer le rôle";
+        const status=document.createElement("button");status.type="button";status.textContent=row.active?"Suspendre":"Réactiver";
+        const update=active=>run(async()=>{if(!window.confirm("Modifier les accès de "+row.email+" ? Les sessions seront révoquées."))return;await api(tenantBase+"/members/"+encodeURIComponent(row.account_id),"PATCH",{role:select.value,active},true);if(!token)return;await loadMembers();notice("Collaborateur mis à jour.");});
+        save.addEventListener("click",()=>update(row.active));status.addEventListener("click",()=>update(!row.active));item.append(select,save,status);
+      }list.append(item);
+    }
+    el("prev-members").disabled=memberOffset===0;el("next-members").disabled=rows.length<20;el("member-page").textContent="Page "+(memberOffset/20+1);
+  }
+  el("open-institution").addEventListener("click",()=>run(loadInstitution));
+  el("institution-refresh").addEventListener("click",()=>run(loadInstitution));
+  el("institution-back").addEventListener("click",()=>{if(!busy){hideMemberInvitation();show("session");}});
+  el("prev-members").addEventListener("click",()=>run(()=>loadMembers(Math.max(0,memberOffset-20))));
+  el("next-members").addEventListener("click",()=>run(()=>loadMembers(memberOffset+20)));
+  el("member-hide-invite").addEventListener("click",hideMemberInvitation);
+  action("member-invite-form",async()=>{hideMemberInvitation();const result=await api(tenantBase+"/invitations","POST",{email:el("member-email").value.trim(),role:el("member-role").value},true);if(!token)return;el("member-invite-token").textContent=result.token;el("member-invite-id").textContent="UUID : "+result.id;el("member-revoke-id").value=result.id;el("member-invite-result").hidden=false;el("member-invite-form").reset();notice("Invitation créée. Aucun email automatique envoyé.");});
+  action("member-revoke-form",async()=>{if(!window.confirm("Révoquer cette invitation ?"))return;await api(tenantBase+"/invitations/"+encodeURIComponent(el("member-revoke-id").value.trim()),"DELETE",undefined,true);if(!token)return;hideMemberInvitation();el("member-revoke-form").reset();notice("Invitation révoquée.");});
   el("saved").addEventListener("change",()=>el("finish").disabled=!el("saved").checked);
   el("finish").addEventListener("click",()=>{clearSession();show("login");notice("MFA activé. Reconnectez-vous avec un nouveau code TOTP.");});
   el("open-invite").addEventListener("click",()=>{if(!busy)show("invite");});
