@@ -44,6 +44,8 @@ from app.exchange import router as exchange_router
 app.include_router(exchange_router)
 from app.acoustic_api import router as acoustic_router
 app.include_router(acoustic_router)
+from app.documents import router as documents_router
+app.include_router(documents_router)
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def home():
