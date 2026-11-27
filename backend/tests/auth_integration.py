@@ -27,6 +27,13 @@ def main():
             identity = client.get("/api/v1/auth/me",headers=headers)
             assert identity.status_code == 200
             assert identity.json()["organization_id"] == str(org_a)
+            assert client.get("/api/v1/organization",headers=headers).json()["id"] == str(org_a)
+            assert client.put("/api/v1/organization/modules/artists",headers=headers,json={"enabled":True}).status_code == 200
+            assert client.put("/api/v1/organization/modules/unknown",headers=headers,json={"enabled":True}).status_code == 404
+            with admin.begin() as conn:
+                assert conn.execute(text("SELECT count(*) FROM audit_events WHERE organization_id=:org AND action='module.updated'"), {"org":org_a}).scalar_one() == 1
+                conn.execute(text("UPDATE memberships SET role='auditor' WHERE account_id=:id"), {"id":account})
+            assert client.put("/api/v1/organization/modules/artists",headers=headers,json={"enabled":False}).status_code == 403
             assert client.post("/api/v1/auth/logout",headers=headers).status_code == 204
             assert client.get("/api/v1/auth/me",headers=headers).status_code == 401
             response = client.post("/api/v1/auth/login",json=payload)
@@ -37,6 +44,8 @@ def main():
             assert client.get("/api/v1/auth/me",headers=headers).status_code == 401
     finally:
         with admin.begin() as conn:
+            conn.execute(text("DELETE FROM audit_events WHERE organization_id=:org"), {"org":org_a})
+            conn.execute(text("DELETE FROM tenant_modules WHERE organization_id=:org"), {"org":org_a})
             conn.execute(text("DELETE FROM memberships WHERE account_id=:id"), {"id":account})
             conn.execute(text("DELETE FROM accounts WHERE id=:id"), {"id":account})
             conn.execute(text("DELETE FROM organizations WHERE id IN (:a,:b)"), {"a":org_a,"b":org_b})
