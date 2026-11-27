@@ -57,6 +57,7 @@ def main():
             created = client.post("/api/v1/platform/organizations",headers=headers,json={"slug":slug,"name":"Test client"})
             assert created.status_code == 201, created.text
             created_id = created.json()["id"]
+            invited_email = f"{uuid4()}@example.invalid"
             try:
                 assert client.post("/api/v1/platform/organizations",headers=headers,json={"slug":slug,"name":"Duplicate"}).status_code == 409
                 listing = client.get("/api/v1/platform/organizations",headers=headers)
@@ -69,8 +70,30 @@ def main():
                     assert conn.execute(text("SELECT count(*) FROM platform_audit_events WHERE organization_id=CAST(:id AS uuid)"), {"id":created_id}).scalar_one() == 3
                 with get_engine().connect() as conn:
                     assert conn.execute(text("SELECT count(*) FROM organizations WHERE id=CAST(:id AS uuid)"), {"id":created_id}).scalar_one() == 0
+                url = f"/api/v1/platform/organizations/{created_id}/invitations"
+                first = client.post(url,headers=headers,json={"email":invited_email})
+                assert first.status_code == 201, first.text
+                second = client.post(url,headers=headers,json={"email":invited_email})
+                assert second.status_code == 201, second.text
+                accept_url = "/api/v1/auth/invitations/accept"
+                assert client.post(accept_url,json={"token":first.json()["token"],"password":password}).status_code == 400
+                invited = client.post(accept_url,json={"token":second.json()["token"],"password":password})
+                assert invited.status_code == 201, invited.text
+                assert invited.json()["organization_id"] == created_id
+                assert client.post(accept_url,json={"token":second.json()["token"],"password":password}).status_code == 400
+                login_new = client.post("/api/v1/auth/login",json={"email":invited_email,"password":password,"organization_id":created_id})
+                assert login_new.status_code == 200
+                assert login_new.json()["mfa_required"] is True
+                new_headers = {"Authorization":"Bearer "+login_new.json()["access_token"]}
+                assert client.get("/api/v1/platform/me",headers=new_headers).status_code == 403
+                assert client.get("/api/v1/organization",headers=new_headers).status_code == 403
+                assert client.patch(f"/api/v1/platform/organizations/{created_id}/status",headers=headers,json={"active":False}).status_code == 200
+                assert client.get("/api/v1/auth/me",headers=new_headers).status_code == 401
             finally:
                 with admin.begin() as conn:
+                    conn.execute(text("DELETE FROM customer_invitations WHERE organization_id=CAST(:id AS uuid)"), {"id":created_id})
+                    conn.execute(text("DELETE FROM memberships WHERE organization_id=CAST(:id AS uuid)"), {"id":created_id})
+                    conn.execute(text("DELETE FROM accounts WHERE email=:email"), {"email":invited_email})
                     conn.execute(text("DELETE FROM platform_audit_events WHERE organization_id=CAST(:id AS uuid)"), {"id":created_id})
                     conn.execute(text("DELETE FROM organizations WHERE id=CAST(:id AS uuid)"), {"id":created_id})
             with admin.begin() as conn:
