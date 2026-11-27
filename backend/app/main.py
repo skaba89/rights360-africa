@@ -36,6 +36,8 @@ from app.payouts import router as payouts_router
 app.include_router(payouts_router)
 from app.field_control import router as field_router
 app.include_router(field_router)
+from app.media import router as media_router
+app.include_router(media_router)
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def home():
