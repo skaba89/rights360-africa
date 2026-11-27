@@ -383,8 +383,8 @@
 
   let mediaOffset=0,mediaSelected=null;
   const mediaBase="/api/v1/media-observations";
-  function resetMedia(){mediaOffset=0;mediaSelected=null;el("media-workspace").hidden=true;el("media-list").replaceChildren();el("media-candidates").replaceChildren();el("media-review").hidden=true;el("media-form").reset();el("media-review").reset();}
-  async function openMedia(){resetMedia();el("media-workspace").hidden=false;el("media-form").hidden=!["admin","manager"].includes(identity?.role);await loadMedia(0);}
+  function resetMedia(){el("acoustic-file").value="";el("acoustic-work").value="";el("acoustic-result").textContent="";mediaOffset=0;mediaSelected=null;el("media-workspace").hidden=true;el("media-list").replaceChildren();el("media-candidates").replaceChildren();el("media-review").hidden=true;el("media-form").reset();el("media-review").reset();}
+  async function openMedia(){resetMedia();el("media-workspace").hidden=false;el("acoustic-workspace").hidden=!["admin","manager"].includes(identity?.role);el("acoustic-enroll").hidden=identity?.role!=="admin";el("media-form").hidden=!["admin","manager"].includes(identity?.role);await loadMedia(0);}
   async function loadMedia(nextOffset=mediaOffset){const rows=await api(mediaBase+"?limit=20&offset="+nextOffset,"GET",undefined,true);if(!token)return;mediaOffset=nextOffset;const list=el("media-list");list.replaceChildren();
     for(const row of rows){const item=document.createElement("article");item.className="tenant-card";const title=document.createElement("strong");title.textContent=row.reported_title+" — "+row.reported_artist;item.append(title);for(const value of [row.external_reference,row.aired_at+" · "+row.duration_seconds+" s",({pending:"À vérifier",matched:"Correspondance retenue",unmatched:"Non identifié"})[row.status],row.work_id?"Œuvre : "+row.work_id:""]){if(!value)continue;const p=document.createElement("p");p.textContent=value;item.append(p);}
     if(row.status==="pending"){const button=document.createElement("button");button.type="button";button.textContent="Rechercher dans le catalogue";button.addEventListener("click",()=>run(()=>loadMediaCandidates(row)));item.append(button);}list.append(item);}
@@ -415,6 +415,18 @@
   el("exchange-input").addEventListener("input",()=>{exchangeValidated=null;el("exchange-commit").disabled=true;el("exchange-report").textContent="";});
   action("exchange-form",async()=>{exchangeValidated=null;el("exchange-commit").disabled=true;const raw=el("exchange-input").value;const catalog=JSON.parse(raw);const report=await api(exchangeBase+"/import","POST",{catalog,dry_run:true},true);if(!token)return;el("exchange-report").textContent=JSON.stringify(report,null,2);if(report.valid&&raw===el("exchange-input").value){exchangeValidated=raw;el("exchange-commit").disabled=false;}});
   el("exchange-commit").addEventListener("click",()=>run(async()=>{if(!exchangeValidated||exchangeValidated!==el("exchange-input").value)return;if(!window.confirm("Importer les nouveaux éléments sans écraser les fiches existantes ?"))return;const catalog=JSON.parse(exchangeValidated);exchangeValidated=null;el("exchange-commit").disabled=true;const report=await api(exchangeBase+"/import","POST",{catalog,dry_run:false},true);if(token)el("exchange-report").textContent=JSON.stringify(report,null,2);}));
+  async function acousticRequest(enroll){
+    const file=el("acoustic-file").files[0];if(!file||file.size>480044)throw new Error("Sélectionner un WAV de taille autorisée.");
+    const path=enroll?"/api/v1/acoustic/references/"+encodeURIComponent(el("acoustic-work").value.trim()):"/api/v1/acoustic/match";
+    if(enroll&&!window.confirm("Confirmer que cet extrait peut être utilisé comme référence ?"))return;
+    const session=token;
+    const response=await fetch(path,{method:"POST",headers:{Authorization:"Bearer "+session,"Content-Type":"audio/wav",Accept:"application/json"},body:file,cache:"no-store",credentials:"omit",redirect:"error"});
+    if(!token||token!==session)return;
+    if(!response.ok){const err=new Error("Échec de comparaison ou enregistrement (HTTP "+response.status+").");err.status=response.status;throw err;}
+    const result=await response.json();if(token===session)el("acoustic-result").textContent=JSON.stringify(result,null,2);
+  }
+  el("acoustic-enroll").addEventListener("click",()=>run(()=>acousticRequest(true)));
+  el("acoustic-match").addEventListener("click",()=>run(()=>acousticRequest(false)));
   el("saved").addEventListener("change",()=>el("finish").disabled=!el("saved").checked);
   el("finish").addEventListener("click",()=>{clearSession();show("login");notice("MFA activé. Reconnectez-vous avec un nouveau code TOTP.");});
   el("open-invite").addEventListener("click",()=>{if(!busy)show("invite");});
