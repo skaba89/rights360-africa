@@ -2,9 +2,9 @@ from fastapi import Depends, HTTPException
 from app.auth import current_identity
 
 PERMISSIONS = {
-    "admin": frozenset({"organization:read", "modules:read", "modules:write", "members:read", "members:write", "artists:read", "artists:write", "works:read", "works:write", "licenses:read", "licenses:write", "licenses:approve", "billing:read", "billing:write"}),
-    "manager": frozenset({"organization:read", "modules:read", "artists:read", "artists:write", "works:read", "works:write", "licenses:read", "licenses:write", "billing:read"}),
-    "auditor": frozenset({"organization:read", "modules:read", "artists:read", "works:read", "licenses:read", "billing:read"}),
+    "admin": frozenset({"organization:read", "modules:read", "modules:write", "members:read", "members:write", "artists:read", "artists:write", "works:read", "works:write", "licenses:read", "licenses:write", "licenses:approve", "billing:read", "billing:write", "distribution:read", "distribution:write"}),
+    "manager": frozenset({"organization:read", "modules:read", "artists:read", "artists:write", "works:read", "works:write", "licenses:read", "licenses:write", "billing:read", "distribution:read"}),
+    "auditor": frozenset({"organization:read", "modules:read", "artists:read", "works:read", "licenses:read", "billing:read", "distribution:read"}),
     "artist": frozenset({"organization:read"}),
 }
 

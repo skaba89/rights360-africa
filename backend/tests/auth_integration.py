@@ -274,6 +274,21 @@ def main():
             assert client.post(receipts_url,headers=headers,json={**receipt,"reference":"pay-2","amount_minor":30000}).status_code == 201
             assert client.get(invoice_url,headers=headers).json()[0]["status"]=="paid"
             assert len(client.get(receipts_url,headers=headers).json())==2
+            dist_url="/api/v1/distributions"
+            assert client.get(dist_url,headers=headers).status_code == 403
+            with admin.begin() as conn:
+                conn.execute(text("INSERT INTO module_entitlements(organization_id,module_key,granted) VALUES (:org,'royalties',true)"),{"org":org_a})
+            assert client.put("/api/v1/organization/modules/royalties",headers=headers,json={"enabled":True}).status_code == 200
+            receipt_id=client.get(receipts_url,headers=headers).json()[0]["id"]
+            dist_data={"receipt_id":receipt_id,"declaration_id":history[1]["id"],"commission_bps":1000}
+            assert client.post(dist_url,headers=headers,json={**dist_data,"declaration_id":history[0]["id"]}).status_code == 409
+            dist=client.post(dist_url,headers=headers,json=dist_data)
+            assert dist.status_code == 201, dist.text
+            assert int(dist.json()["gross_minor"])==int(dist.json()["commission_minor"])+int(dist.json()["net_minor"])
+            assert sum(int(line["amount_minor"]) for line in dist.json()["lines"])==int(dist.json()["net_minor"])
+            assert client.post(dist_url,headers=headers,json=dist_data).status_code == 409
+            assert len(client.get(dist_url+"/"+dist.json()["id"]+"/lines",headers=headers).json())==2
+
 
 
             assert client.patch(status_url,headers=headers,json={"status":"revoked"}).status_code == 200
@@ -354,6 +369,8 @@ def main():
             from app.login_limits import bucket_key
             conn.execute(text("DELETE FROM login_buckets WHERE bucket IN (:account,:peer)"), {"account":bucket_key("account",email),"peer":bucket_key("peer","testclient")})
             conn.execute(text("DELETE FROM audit_events WHERE organization_id=:org"), {"org":org_a})
+            conn.execute(text("DELETE FROM royalty_distribution_lines WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
+            conn.execute(text("DELETE FROM royalty_distributions WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM royalty_receipts WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM royalty_invoices WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM tariffs WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})

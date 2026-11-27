@@ -28,6 +28,8 @@ from app.tariffs import router as tariffs_router
 app.include_router(tariffs_router)
 from app.billing import router as billing_router
 app.include_router(billing_router)
+from app.distribution import router as distribution_router
+app.include_router(distribution_router)
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def home():
