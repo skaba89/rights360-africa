@@ -177,9 +177,27 @@ def main():
             assert client.put("/api/v1/organization/modules/artists",headers=headers,json={"enabled":True}).status_code == 200
             assert client.put("/api/v1/organization/modules/unknown",headers=headers,json={"enabled":True}).status_code == 404
             assert next(m for m in client.get("/api/v1/organization/modules",headers=headers).json() if m["module_key"]=="artists")["enabled"] is True
+            artist_url="/api/v1/artists"
+            artist_data={"member_number":"test-001","legal_name":"Integration Artist","status":"active"}
+            created_artist=client.post(artist_url,headers=headers,json=artist_data)
+            assert created_artist.status_code == 201, created_artist.text
+            artist_id=created_artist.json()["id"]
+            assert created_artist.json()["member_number"] == "TEST-001"
+            assert client.post(artist_url,headers=headers,json=artist_data).status_code == 409
+            assert client.get(artist_url,headers=headers,params={"q":"Integration","status":"active"}).json()[0]["id"] == artist_id
+            assert client.get(artist_url+"/"+artist_id,headers=headers).status_code == 200
+            assert client.put(artist_url+"/"+artist_id,headers=headers,json={**artist_data,"status":"archived"}).status_code == 200
+            foreign_id=uuid4()
+            with admin.begin() as conn:
+                conn.execute(text("INSERT INTO artists(id,organization_id,member_number,legal_name) VALUES (:id,:org,'TEST-001','Outside')"),{"id":foreign_id,"org":org_b})
+            assert client.get(artist_url+"/"+str(foreign_id),headers=headers).status_code == 404
+            assert client.put(artist_url+"/"+str(foreign_id),headers=headers,json=artist_data).status_code == 404
+            assert client.get(artist_url,headers=headers).json()[0]["id"] == artist_id
+
             with admin.begin() as conn:
                 conn.execute(text("UPDATE module_entitlements SET expires_at=now()-interval '1 second' WHERE organization_id=:org"),{"org":org_a})
             assert next(m for m in client.get("/api/v1/organization/modules",headers=headers).json() if m["module_key"]=="artists")["enabled"] is False
+            assert client.get("/api/v1/artists",headers=headers).status_code == 403
             with admin.begin() as conn:
                 assert conn.execute(text("SELECT count(*) FROM audit_events WHERE organization_id=:org AND action='module.updated'"), {"org":org_a}).scalar_one() == 1
                 conn.execute(text("UPDATE memberships SET role='auditor' WHERE account_id=:id"), {"id":account})
@@ -244,6 +262,7 @@ def main():
             from app.login_limits import bucket_key
             conn.execute(text("DELETE FROM login_buckets WHERE bucket IN (:account,:peer)"), {"account":bucket_key("account",email),"peer":bucket_key("peer","testclient")})
             conn.execute(text("DELETE FROM audit_events WHERE organization_id=:org"), {"org":org_a})
+            conn.execute(text("DELETE FROM artists WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM module_entitlements WHERE organization_id=:org"),{"org":org_a})
             conn.execute(text("DELETE FROM platform_audit_events WHERE organization_id=:org"),{"org":org_a})
             conn.execute(text("DELETE FROM tenant_modules WHERE organization_id=:org"), {"org":org_a})

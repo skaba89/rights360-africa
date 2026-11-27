@@ -2,7 +2,7 @@
 (() => {
   const el = id => document.getElementById(id);
   const views = ["login","invite","mfa","recovery","session","platform","institution"];
-  let token = null, timer = null, busy = false, selected = null, offset = 0, organizations = [], memberOffset = 0, identity = null;
+  let token = null, timer = null, busy = false, selected = null, offset = 0, organizations = [], memberOffset = 0, identity = null, artistOffset = 0, editingArtist = null;
   function notice(message="",error=false){el("notice").textContent=message;el("notice").classList.toggle("error",error);}
   function show(view){views.forEach(v=>{el(v+"-view").hidden=v!==view;});notice();}
   function clearSession(){resetInstitution();resetPlatform();token=null;clearTimeout(timer);timer=null;el("secret").textContent="";el("recovery").textContent="";el("saved").checked=false;el("finish").disabled=true;el("confirm-form").hidden=true;el("setup-form").hidden=false;document.querySelectorAll("form").forEach(f=>f.reset());}
@@ -72,7 +72,7 @@
   const tenantBase="/api/v1/organization";
   const roles={admin:"Administrateur",manager:"Gestionnaire",auditor:"Auditeur",artist:"Artiste"};
   function hideMemberInvitation(){el("member-invite-token").textContent="";el("member-invite-id").textContent="";el("member-invite-result").hidden=true;}
-  function resetInstitution(){identity=null;memberOffset=0;hideMemberInvitation();for(const id of ["institution-name","institution-role","institution-module-list","member-list","member-page"])el(id).replaceChildren();el("institution-modules").hidden=true;el("institution-members").hidden=true;}
+  function resetInstitution(){resetArtists();identity=null;memberOffset=0;hideMemberInvitation();for(const id of ["institution-name","institution-role","institution-module-list","member-list","member-page"])el(id).replaceChildren();el("institution-modules").hidden=true;el("institution-members").hidden=true;}
   async function loadInstitution(){
     const me=await api("/api/v1/auth/me","GET",undefined,true);if(!token)return;
     if(me.mfa_required){identity=null;show("mfa");return;}
@@ -90,11 +90,14 @@
   async function loadTenantModules(admin){
     const rows=await api(tenantBase+"/modules","GET",undefined,true);if(!token)return;
     const list=el("institution-module-list");list.replaceChildren();
+    const artistEnabled=rows.some(row=>row.module_key==="artists"&&row.enabled);
+    if(!artistEnabled)resetArtists();
     for(const row of rows){
       const item=document.createElement("article");item.className="tenant-card";
       const title=document.createElement("strong");title.textContent=modules[row.module_key]||row.module_key;item.append(title);
-      const status=document.createElement("p");status.textContent=row.enabled?"Activé — métier à développer":row.entitled?"Autorisé, désactivé":"Licence non attribuée ou expirée";item.append(status);
+      const status=document.createElement("p");status.textContent=row.enabled?(row.module_key==="artists"?"Activé — registre disponible":"Activé — métier à développer"):row.entitled?"Autorisé, désactivé":"Licence non attribuée ou expirée";item.append(status);
       if(admin&&(row.entitled||row.enabled)){const button=document.createElement("button");button.type="button";button.textContent=row.enabled?"Désactiver":"Activer";button.addEventListener("click",()=>run(async()=>{await api(tenantBase+"/modules/"+encodeURIComponent(row.module_key),"PUT",{enabled:!row.enabled},true);if(!token)return;await loadTenantModules(true);notice("Configuration enregistrée.");}));item.append(button);}
+      if(row.module_key==="artists"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir le registre";open.addEventListener("click",()=>run(async()=>{resetArtists();el("artist-workspace").hidden=false;el("artist-form").hidden=!["admin","manager"].includes(identity?.role);await loadArtists(0);}));item.append(open);}
       list.append(item);
     }
   }
@@ -125,6 +128,28 @@
   el("member-hide-invite").addEventListener("click",hideMemberInvitation);
   action("member-invite-form",async()=>{hideMemberInvitation();const result=await api(tenantBase+"/invitations","POST",{email:el("member-email").value.trim(),role:el("member-role").value},true);if(!token)return;el("member-invite-token").textContent=result.token;el("member-invite-id").textContent="UUID : "+result.id;el("member-revoke-id").value=result.id;el("member-invite-result").hidden=false;el("member-invite-form").reset();notice("Invitation créée. Aucun email automatique envoyé.");});
   action("member-revoke-form",async()=>{if(!window.confirm("Révoquer cette invitation ?"))return;await api(tenantBase+"/invitations/"+encodeURIComponent(el("member-revoke-id").value.trim()),"DELETE",undefined,true);if(!token)return;hideMemberInvitation();el("member-revoke-form").reset();notice("Invitation révoquée.");});
+
+  const artistBase="/api/v1/artists";
+  const artistStatuses={pending:"En attente",active:"Actif",suspended:"Suspendu",archived:"Archivé"};
+  function resetArtists(){editingArtist=null;artistOffset=0;el("artist-workspace").hidden=true;el("artist-list").replaceChildren();el("artist-form").reset();el("artist-search").reset();el("artist-form-title").textContent="Nouvel adhérent";}
+  function editArtist(row){editingArtist=row?.id||null;el("artist-form").reset();el("artist-form-title").textContent=row?"Modifier le dossier":"Nouvel adhérent";if(row){for(const [field,key] of Object.entries({number:"member_number",name:"legal_name",stage:"stage_name",email:"email",phone:"phone",status:"status"}))el("artist-"+field).value=row[key]||"";}}
+  async function loadArtists(nextOffset=artistOffset){
+    const query=new URLSearchParams({q:el("artist-query").value,limit:"20",offset:String(nextOffset)});
+    if(el("artist-filter").value)query.set("status",el("artist-filter").value);
+    const rows=await api(artistBase+"?"+query,"GET",undefined,true);if(!token)return;
+    artistOffset=nextOffset;const list=el("artist-list");list.replaceChildren();
+    if(!rows.length){const p=document.createElement("p");p.textContent="Aucun dossier sur cette page.";list.append(p);}
+    for(const row of rows){const item=document.createElement("article");item.className="tenant-card";
+      const title=document.createElement("strong");title.textContent=row.legal_name;item.append(title);
+      for(const value of [row.member_number+" · "+artistStatuses[row.status],row.stage_name,row.email,row.phone])if(value){const p=document.createElement("p");p.textContent=value;item.append(p);}
+      if(["admin","manager"].includes(identity?.role)){const button=document.createElement("button");button.type="button";button.textContent="Modifier";button.addEventListener("click",()=>{if(!busy)editArtist(row);});item.append(button);}list.append(item);}
+    el("artist-prev").disabled=artistOffset===0;el("artist-next").disabled=rows.length<20;el("artist-page").textContent="Page "+(artistOffset/20+1);
+  }
+  action("artist-search",()=>loadArtists(0));
+  el("artist-prev").addEventListener("click",()=>run(()=>loadArtists(Math.max(0,artistOffset-20))));
+  el("artist-next").addEventListener("click",()=>run(()=>loadArtists(artistOffset+20)));
+  el("artist-new").addEventListener("click",()=>{if(!busy)editArtist(null);});
+  action("artist-form",async()=>{const data={member_number:el("artist-number").value,legal_name:el("artist-name").value,stage_name:el("artist-stage").value||null,email:el("artist-email").value||null,phone:el("artist-phone").value||null,status:el("artist-status").value};await api(artistBase+(editingArtist?"/"+encodeURIComponent(editingArtist):""),editingArtist?"PUT":"POST",data,true);if(!token)return;editArtist(null);await loadArtists(0);notice("Dossier enregistré.");});
   el("saved").addEventListener("change",()=>el("finish").disabled=!el("saved").checked);
   el("finish").addEventListener("click",()=>{clearSession();show("login");notice("MFA activé. Reconnectez-vous avec un nouveau code TOTP.");});
   el("open-invite").addEventListener("click",()=>{if(!busy)show("invite");});
