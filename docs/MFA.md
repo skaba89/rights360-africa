@@ -1,0 +1,4 @@
+# MFA development baseline
+Set MFA_ENCRYPTION_KEY to a unique Fernet key (32 random bytes, URL-safe base64). Preserve it securely across restarts and backups. Never commit it.
+Authenticated users call /api/v1/auth/mfa/setup with their password, enter the returned secret manually in a TOTP app, then call /api/v1/auth/mfa/confirm with password and current six-digit code. Confirmation revokes all sessions. Subsequent logins require password and a fresh OTP. A database row lock serializes code consumption; previously used time steps cannot be reused. Codes use 30-second steps with one-step clock tolerance.
+Enrollment is optional in this development version. Recovery codes, mandatory MFA for privileged roles, key rotation, enrollment expiry, recovery procedure and additional integration testing are outstanding. No production deployment until these controls are verified.

@@ -57,3 +57,10 @@ class LoginBucket(Base):
     bucket: Mapped[str] = mapped_column(String(80), primary_key=True)
     window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False)
+
+class AccountMFA(Base):
+    __tablename__ = "account_mfa"
+    account_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True)
+    secret_ciphertext: Mapped[str] = mapped_column(Text, nullable=False)
+    last_step: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
