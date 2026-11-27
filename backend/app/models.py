@@ -206,3 +206,24 @@ class ExploitationLicense(Base):
     ends_on: Mapped[date] = mapped_column(Date,nullable=False)
     status: Mapped[str] = mapped_column(String(20),nullable=False,server_default="draft")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False,server_default=func.now())
+
+class Tariff(Base):
+    __tablename__ = "tariffs"
+    __table_args__ = (
+        UniqueConstraint("organization_id","reference","version",name="tariff_version_unique"),
+        CheckConstraint("version>0 AND starts_on<=ends_on AND rate>0 AND rate<=1000000000000",name="tariff_values_valid"),
+        CheckConstraint("category IN ('radio','television','hotel','restaurant','event','digital','other')",name="tariff_category_valid"),
+        CheckConstraint("method IN ('flat','revenue','capacity','frequency') AND (method<>'revenue' OR rate<=10000)",name="tariff_method_valid"),
+        CheckConstraint("currency IN ('GNF','XOF','EUR','USD')",name="tariff_currency_valid"))
+    id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid,ForeignKey("organizations.id"),nullable=False)
+    reference: Mapped[str] = mapped_column(String(50),nullable=False)
+    version: Mapped[int] = mapped_column(Integer,nullable=False)
+    category: Mapped[str] = mapped_column(String(30),nullable=False)
+    usage_type: Mapped[str] = mapped_column(String(100),nullable=False)
+    method: Mapped[str] = mapped_column(String(20),nullable=False)
+    currency: Mapped[str] = mapped_column(String(3),nullable=False)
+    rate: Mapped[int] = mapped_column(BigInteger,nullable=False)
+    starts_on: Mapped[date] = mapped_column(Date,nullable=False)
+    ends_on: Mapped[date] = mapped_column(Date,nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False,server_default=func.now())
