@@ -1,6 +1,7 @@
 "use strict";
 (() => {
   const el = id => document.getElementById(id);
+  document.documentElement.dataset.busy="false";
   const views = ["login","invite","mfa","recovery","session","platform","institution"];
   let token = null, timer = null, busy = false, selected = null, offset = 0, organizations = [], memberOffset = 0, identity = null, artistOffset = 0, editingArtist = null, workOffset = 0, editingWork = null;
   function notice(message="",error=false){el("notice").textContent=message;el("notice").classList.toggle("error",error);}
@@ -14,7 +15,7 @@
     if(!response.ok){const messages={400:"Invitation invalide ou expirée.",401:"Identifiants, code de sécurité ou session invalides.",403:"Accès refusé.",409:"Cette opération est déjà effectuée ou incompatible.",422:"Vérifiez les informations saisies.",429:"Trop de tentatives. Réessayez dans une minute."};const error=new Error(messages[response.status]||"Service indisponible. Réessayez ultérieurement.");error.status=response.status;throw error;}
     return response.status===204?null:response.json();
   }
-  function action(form,handler){el(form).addEventListener("submit",async e=>{e.preventDefault();if(busy)return;busy=true;const button=e.currentTarget.querySelector("button[type=submit]");button.disabled=true;notice();try{await handler();}catch(err){notice(err.message||"Erreur de connexion.",true);}finally{busy=false;button.disabled=false;e.target.querySelectorAll('input[type="password"],input[autocomplete="one-time-code"]').forEach(i=>i.value="");}});}
+  function action(form,handler){el(form).addEventListener("submit",async e=>{e.preventDefault();if(busy)return;busy=true;document.documentElement.dataset.busy="true";const button=e.currentTarget.querySelector("button[type=submit]");button.disabled=true;notice();try{await handler();}catch(err){notice(err.message||"Erreur de connexion.",true);}finally{busy=false;document.documentElement.dataset.busy="false";button.disabled=false;e.target.querySelectorAll('input[type="password"],input[autocomplete="one-time-code"]').forEach(i=>i.value="");}});}
   action("login-form",async()=>{
     const data={organization_id:el("org").value.trim(),email:el("email").value.trim(),password:el("password").value};
     if(el("code").value.trim())data[el("factor").value]=el("code").value.trim();
@@ -57,7 +58,7 @@
     }
   }
   async function selectOrganization(org){selected=org;hideInvitation();el("grant-form").reset();el("platform-invite").reset();el("detail-name").textContent=org.name;el("detail-id").textContent=org.id;el("change-status").textContent=org.active?"Suspendre l’organisation":"Réactiver l’organisation";el("org-detail").hidden=false;el("entitlement-list").replaceChildren();await loadEntitlements();}
-  async function run(handler){if(busy||!token)return;busy=true;notice();try{await handler();}catch(err){if(err.status===401){clearSession();show("login");}notice(err.message,true);}finally{busy=false;}}
+  async function run(handler){if(busy||!token)return;busy=true;document.documentElement.dataset.busy="true";notice();try{await handler();}catch(err){if(err.status===401){clearSession();show("login");}notice(err.message,true);}finally{busy=false;document.documentElement.dataset.busy="false";}}
   el("open-platform").addEventListener("click",()=>run(async()=>{await api("/api/v1/platform/me","GET",undefined,true);if(!token)return;show("platform");await loadOrganizations(0);}));
   el("back-profile").addEventListener("click",()=>{if(!busy){hideInvitation();show("session");}});
   el("refresh-orgs").addEventListener("click",()=>run(()=>loadOrganizations()));
@@ -450,5 +451,5 @@
   el("open-invite").addEventListener("click",()=>{if(!busy)show("invite");});
   el("enable-mfa").addEventListener("click",()=>show("mfa"));
   document.querySelectorAll("[data-back]").forEach(b=>b.addEventListener("click",()=>{if(!busy){el("invite-form").reset();show("login");}}));
-  document.querySelectorAll("[data-logout]").forEach(b=>b.addEventListener("click",async()=>{if(busy)return;busy=true;let failed=false;try{await api("/api/v1/auth/logout","POST",undefined,true);}catch{failed=true;}finally{clearSession();show("login");busy=false;notice(failed?"Session locale fermée. La révocation serveur n’a pas pu être confirmée.":"Vous êtes déconnecté.",failed);}}));
+  document.querySelectorAll("[data-logout]").forEach(b=>b.addEventListener("click",async()=>{if(busy)return;busy=true;document.documentElement.dataset.busy="true";let failed=false;try{await api("/api/v1/auth/logout","POST",undefined,true);}catch{failed=true;}finally{clearSession();show("login");busy=false;document.documentElement.dataset.busy="false";notice(failed?"Session locale fermée. La révocation serveur n’a pas pu être confirmée.":"Vous êtes déconnecté.",failed);}}));
 })();
