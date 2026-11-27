@@ -1,0 +1,12 @@
+services:
+  api:
+    ports: !override
+      - "127.0.0.1:8501:8000"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+  db:
+    restart: unless-stopped
