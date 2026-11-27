@@ -26,6 +26,8 @@ from app.exploitation import router as exploitation_router
 app.include_router(exploitation_router)
 from app.tariffs import router as tariffs_router
 app.include_router(tariffs_router)
+from app.billing import router as billing_router
+app.include_router(billing_router)
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def home():

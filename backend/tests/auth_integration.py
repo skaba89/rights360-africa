@@ -255,6 +255,26 @@ def main():
             assert client.post(quote_url,headers=headers,json={**quote_data,"usage_date":"2100-01-01"}).status_code == 409
             assert client.post("/api/v1/tariffs",headers=headers,json={**tariff_data,"expected_version":1,"rate":600}).status_code == 201
             assert client.post(quote_url,headers=headers,json=quote_data).json()["amount_minor"]=="50000"
+            invoice_url="/api/v1/invoices"
+            assert client.get(invoice_url,headers=headers).status_code == 403
+            with admin.begin() as conn:
+                conn.execute(text("INSERT INTO module_entitlements(organization_id,module_key,granted) VALUES (:org,'finance',true)"),{"org":org_a})
+            assert client.put("/api/v1/organization/modules/finance",headers=headers,json={"enabled":True}).status_code == 200
+            invoice_data={**quote_data,"tariff_id":tariff_id,"reference":"inv-1","due_on":"2099-12-31"}
+            invoice=client.post(invoice_url,headers=headers,json=invoice_data)
+            assert invoice.status_code == 201, invoice.text
+            assert invoice.json()["amount_minor"]=="50000"
+            assert client.post(invoice_url,headers=headers,json={**invoice_data,"reference":"inv-2"}).status_code == 409
+            receipts_url=invoice_url+"/"+invoice.json()["id"]+"/receipts"
+            receipt={"reference":"pay-1","amount_minor":20000,"received_on":"2026-01-01"}
+            assert client.post(receipts_url,headers=headers,json=receipt).status_code == 201
+            assert client.post(receipts_url,headers=headers,json=receipt).status_code == 409
+            assert client.get(invoice_url,headers=headers).json()[0]["status"]=="partial"
+            assert client.post(receipts_url,headers=headers,json={**receipt,"reference":"pay-2","amount_minor":30001}).status_code == 409
+            assert client.post(receipts_url,headers=headers,json={**receipt,"reference":"pay-2","amount_minor":30000}).status_code == 201
+            assert client.get(invoice_url,headers=headers).json()[0]["status"]=="paid"
+            assert len(client.get(receipts_url,headers=headers).json())==2
+
 
             assert client.patch(status_url,headers=headers,json={"status":"revoked"}).status_code == 200
             assert client.post(quote_url,headers=headers,json=quote_data).status_code == 409
@@ -334,6 +354,8 @@ def main():
             from app.login_limits import bucket_key
             conn.execute(text("DELETE FROM login_buckets WHERE bucket IN (:account,:peer)"), {"account":bucket_key("account",email),"peer":bucket_key("peer","testclient")})
             conn.execute(text("DELETE FROM audit_events WHERE organization_id=:org"), {"org":org_a})
+            conn.execute(text("DELETE FROM royalty_receipts WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
+            conn.execute(text("DELETE FROM royalty_invoices WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM tariffs WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM exploitation_licenses WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM operators WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
