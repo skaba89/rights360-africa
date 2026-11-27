@@ -72,7 +72,7 @@
   const tenantBase="/api/v1/organization";
   const roles={admin:"Administrateur",manager:"Gestionnaire",auditor:"Auditeur",artist:"Artiste"};
   function hideMemberInvitation(){el("member-invite-token").textContent="";el("member-invite-id").textContent="";el("member-invite-result").hidden=true;}
-  function resetInstitution(){resetDistribution();resetBilling();resetTariffs();resetLicenses();resetWorks();resetArtists();identity=null;memberOffset=0;hideMemberInvitation();for(const id of ["institution-name","institution-role","institution-module-list","member-list","member-page"])el(id).replaceChildren();el("institution-modules").hidden=true;el("institution-members").hidden=true;}
+  function resetInstitution(){resetAccounting();resetDistribution();resetBilling();resetTariffs();resetLicenses();resetWorks();resetArtists();identity=null;memberOffset=0;hideMemberInvitation();for(const id of ["institution-name","institution-role","institution-module-list","member-list","member-page"])el(id).replaceChildren();el("institution-modules").hidden=true;el("institution-members").hidden=true;}
   async function loadInstitution(){
     const me=await api("/api/v1/auth/me","GET",undefined,true);if(!token)return;
     if(me.mfa_required){identity=null;show("mfa");return;}
@@ -92,7 +92,7 @@
     const list=el("institution-module-list");list.replaceChildren();
     const artistEnabled=rows.some(row=>row.module_key==="artists"&&row.enabled);
     if(!artistEnabled)resetArtists();
-    if(!rows.some(row=>row.module_key==="finance"&&row.enabled))resetBilling();
+    if(!rows.some(row=>row.module_key==="finance"&&row.enabled)){resetAccounting();resetBilling();}
     if(!rows.some(row=>row.module_key==="royalties"&&row.enabled))resetDistribution();
     if(!rows.some(row=>row.module_key==="licenses"&&row.enabled)){resetTariffs();resetLicenses();}
     if(!rows.some(row=>row.module_key==="works"&&row.enabled))resetWorks();
@@ -107,6 +107,7 @@
       if(row.module_key==="licenses"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir les barèmes";open.addEventListener("click",()=>run(openTariffs));item.append(open);}
       if(row.module_key==="finance"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir la facturation";open.addEventListener("click",()=>run(openBilling));item.append(open);}
       if(row.module_key==="royalties"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir les répartitions";open.addEventListener("click",()=>run(openDistribution));item.append(open);}
+      if(row.module_key==="finance"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir le journal comptable";open.addEventListener("click",()=>run(openAccounting));item.append(open);}
       list.append(item);
     }
   }
@@ -273,7 +274,7 @@
     const rows=await api(billingBase+"?limit=20&offset="+nextOffset,"GET",undefined,true);if(!token)return;
     billingOffset=nextOffset;const list=el("billing-list");list.replaceChildren();
     for(const row of rows){const item=document.createElement("article");item.className="tenant-card";const title=document.createElement("strong");title.textContent=row.reference+" · "+billingStates[row.status];item.append(title);
-      for(const value of ["Montant : "+row.amount_minor+" "+row.currency+" (unités minimales)","Encaissé : "+row.paid_minor,"Solde : "+row.balance_minor,"Échéance : "+row.due_on]){const p=document.createElement("p");p.textContent=value;item.append(p);}
+      for(const value of ["Montant : "+row.amount_minor+" "+row.currency+" (unités minimales)","Encaissé : "+row.paid_minor,"Solde : "+row.balance_minor,"Échéance : "+row.due_on,"UUID : "+row.id]){const p=document.createElement("p");p.textContent=value;item.append(p);}
       const button=document.createElement("button");button.type="button";button.textContent="Encaissements";button.addEventListener("click",()=>run(()=>openReceipts(row)));item.append(button);list.append(item);}
     if(!rows.length){const p=document.createElement("p");p.textContent="Aucune facture sur cette page.";list.append(p);}
     el("billing-prev").disabled=billingOffset===0;el("billing-next").disabled=rows.length<20;el("billing-page").textContent="Page "+(billingOffset/20+1);
@@ -311,6 +312,29 @@
   el("distribution-prev").addEventListener("click",()=>run(()=>loadDistributions(Math.max(0,distributionOffset-20))));
   el("distribution-next").addEventListener("click",()=>run(()=>loadDistributions(distributionOffset+20)));
   action("distribution-form",async()=>{const data={receipt_id:el("distribution-receipt").value.trim(),declaration_id:el("distribution-declaration").value.trim(),commission_bps:Number(el("distribution-commission").value)};if(!window.confirm("Enregistrer ce calcul interne ? Aucun paiement ne sera effectué."))return;const result=await api(distributionBase,"POST",data,true);if(!token)return;el("distribution-form").reset();await loadDistributions(0);await loadDistributionLines(result);notice("Calcul enregistré.");});
+
+  let accountingOffset=0;
+  const accountingBase="/api/v1/accounting";
+  const accountNames={receivable:"Créances",royalties_unallocated:"Droits non répartis",cash_unverified:"Encaissements non rapprochés",management_commission:"Commissions",beneficiary_payable:"Dettes envers les ayants droit"};
+  function resetAccounting(){accountingOffset=0;el("accounting-workspace").hidden=true;for(const id of ["accounting-list","accounting-balances","accounting-lines","accounting-detail-title","accounting-page"])el(id).replaceChildren();el("accounting-form").reset();}
+  async function openAccounting(){resetAccounting();el("accounting-workspace").hidden=false;el("accounting-form").hidden=identity?.role!=="admin";await loadAccounting(0);}
+  function accountingText(parent,value){const p=document.createElement("p");p.textContent=value;parent.append(p);}
+  async function loadAccounting(nextOffset=accountingOffset){
+    const balances=await api(accountingBase+"/balances","GET",undefined,true);if(!token)return;
+    const balanceList=el("accounting-balances");balanceList.replaceChildren();
+    for(const row of balances)accountingText(balanceList,row.currency+" · "+(accountNames[row.account_key]||row.account_key)+" · Débit "+row.debit_minor+" · Crédit "+row.credit_minor+" · Solde "+row.balance_minor);
+    if(!balances.length)accountingText(balanceList,"Aucun solde comptabilisé.");
+    const rows=await api(accountingBase+"/entries?limit=20&offset="+nextOffset,"GET",undefined,true);if(!token)return;
+    accountingOffset=nextOffset;const list=el("accounting-list");list.replaceChildren();
+    for(const row of rows){const item=document.createElement("article");item.className="tenant-card";const title=document.createElement("strong");title.textContent=row.source_type+" · "+row.currency;item.append(title);accountingText(item,"Source : "+row.source_id);accountingText(item,row.posted_at);const button=document.createElement("button");button.type="button";button.textContent="Détail débit / crédit";button.addEventListener("click",()=>run(()=>loadAccountingLines(row)));item.append(button);list.append(item);}
+    if(!rows.length)accountingText(list,"Aucune écriture sur cette page.");
+    el("accounting-prev").disabled=accountingOffset===0;el("accounting-next").disabled=rows.length<20;el("accounting-page").textContent="Page "+(accountingOffset/20+1);
+  }
+  async function loadAccountingLines(row){const rows=await api(accountingBase+"/entries/"+encodeURIComponent(row.id)+"/lines","GET",undefined,true);if(!token)return;el("accounting-detail-title").textContent="Écriture "+row.id;const list=el("accounting-lines");list.replaceChildren();for(const line of rows)accountingText(list,(accountNames[line.account_key]||line.account_key)+" · Débit "+line.debit_minor+" · Crédit "+line.credit_minor+" "+row.currency+(line.artist_id?" · Ayant droit "+line.artist_id:""));}
+  el("accounting-refresh").addEventListener("click",()=>run(()=>loadAccounting()));
+  el("accounting-prev").addEventListener("click",()=>run(()=>loadAccounting(Math.max(0,accountingOffset-20))));
+  el("accounting-next").addEventListener("click",()=>run(()=>loadAccounting(accountingOffset+20)));
+  action("accounting-form",async()=>{if(!window.confirm("Comptabiliser cette source dans le journal auxiliaire ?"))return;const row=await api(accountingBase+"/entries","POST",{source_type:el("accounting-source-type").value,source_id:el("accounting-source-id").value.trim()},true);if(!token)return;el("accounting-form").reset();await loadAccounting(0);await loadAccountingLines(row);notice("Écriture enregistrée.");});
   el("saved").addEventListener("change",()=>el("finish").disabled=!el("saved").checked);
   el("finish").addEventListener("click",()=>{clearSession();show("login");notice("MFA activé. Reconnectez-vous avec un nouveau code TOTP.");});
   el("open-invite").addEventListener("click",()=>{if(!busy)show("invite");});
