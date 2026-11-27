@@ -72,7 +72,7 @@
   const tenantBase="/api/v1/organization";
   const roles={admin:"Administrateur",manager:"Gestionnaire",auditor:"Auditeur",artist:"Artiste"};
   function hideMemberInvitation(){el("member-invite-token").textContent="";el("member-invite-id").textContent="";el("member-invite-result").hidden=true;}
-  function resetInstitution(){resetLicenses();resetWorks();resetArtists();identity=null;memberOffset=0;hideMemberInvitation();for(const id of ["institution-name","institution-role","institution-module-list","member-list","member-page"])el(id).replaceChildren();el("institution-modules").hidden=true;el("institution-members").hidden=true;}
+  function resetInstitution(){resetTariffs();resetLicenses();resetWorks();resetArtists();identity=null;memberOffset=0;hideMemberInvitation();for(const id of ["institution-name","institution-role","institution-module-list","member-list","member-page"])el(id).replaceChildren();el("institution-modules").hidden=true;el("institution-members").hidden=true;}
   async function loadInstitution(){
     const me=await api("/api/v1/auth/me","GET",undefined,true);if(!token)return;
     if(me.mfa_required){identity=null;show("mfa");return;}
@@ -92,7 +92,7 @@
     const list=el("institution-module-list");list.replaceChildren();
     const artistEnabled=rows.some(row=>row.module_key==="artists"&&row.enabled);
     if(!artistEnabled)resetArtists();
-    if(!rows.some(row=>row.module_key==="licenses"&&row.enabled))resetLicenses();
+    if(!rows.some(row=>row.module_key==="licenses"&&row.enabled)){resetTariffs();resetLicenses();}
     if(!rows.some(row=>row.module_key==="works"&&row.enabled))resetWorks();
     for(const row of rows){
       const item=document.createElement("article");item.className="tenant-card";
@@ -102,6 +102,7 @@
       if(row.module_key==="artists"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir le registre";open.addEventListener("click",()=>run(async()=>{resetArtists();el("artist-workspace").hidden=false;el("artist-form").hidden=!["admin","manager"].includes(identity?.role);await loadArtists(0);}));item.append(open);}
       if(row.module_key==="works"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir les œuvres";open.addEventListener("click",()=>run(async()=>{resetWorks();el("work-workspace").hidden=false;el("work-form").hidden=!["admin","manager"].includes(identity?.role);await loadWorks(0);}));item.append(open);}
       if(row.module_key==="licenses"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir les licences";open.addEventListener("click",()=>run(openLicenses));item.append(open);}
+      if(row.module_key==="licenses"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir les barèmes";open.addEventListener("click",()=>run(openTariffs));item.append(open);}
       list.append(item);
     }
   }
@@ -236,6 +237,28 @@
   el("license-next").addEventListener("click",()=>run(()=>loadLicenses(licenseOffset+20)));
   action("operator-form",async()=>{const data={reference:el("operator-reference").value,name:el("operator-name").value,category:el("operator-category").value,email:el("operator-email").value||null,phone:el("operator-phone").value||null};const result=await api(operatorBase,"POST",data,true);if(!token)return;el("operator-form").reset();el("license-operator").value=result.id;await loadOperators();notice("Exploitant créé.");});
   action("license-form",async()=>{const data={reference:el("license-reference").value,operator_id:el("license-operator").value.trim(),work_id:el("license-work").value.trim()||null,territory:el("license-territory").value,usage_type:el("license-usage").value,starts_on:el("license-start").value,ends_on:el("license-end").value};await api(licenseBase,"POST",data,true);if(!token)return;el("license-form").reset();await loadLicenses(0);notice("Brouillon créé.");});
+
+  let tariffOffset=0, selectedTariff=null;
+  const tariffBase="/api/v1/tariffs";
+  const tariffMethods={flat:"Forfait",revenue:"Pourcentage du chiffre d’affaires",capacity:"Capacité",frequency:"Fréquence"};
+  function resetTariffs(){tariffOffset=0;selectedTariff=null;el("tariff-workspace").hidden=true;el("tariff-list").replaceChildren();el("tariff-form").reset();el("quote-form").reset();el("quote-form").hidden=true;el("quote-result").textContent="";el("quote-tariff").textContent="";}
+  async function openTariffs(){resetTariffs();el("tariff-workspace").hidden=false;el("tariff-form").hidden=identity?.role!=="admin";await loadTariffs(0);}
+  function selectTariff(row){selectedTariff=row;el("quote-form").reset();el("quote-form").hidden=false;el("quote-tariff").textContent=row.reference+" · V"+row.version+" · "+tariffMethods[row.method];el("quote-result").textContent="";el("quote-quantity-group").hidden=!["capacity","frequency"].includes(row.method);el("quote-revenue-group").hidden=row.method!=="revenue";el("quote-quantity").required=!el("quote-quantity-group").hidden;el("quote-revenue").required=!el("quote-revenue-group").hidden;}
+  async function loadTariffs(nextOffset=tariffOffset){
+    const rows=await api(tariffBase+"?limit=20&offset="+nextOffset,"GET",undefined,true);if(!token)return;
+    tariffOffset=nextOffset;const list=el("tariff-list");list.replaceChildren();
+    for(const row of rows){const item=document.createElement("article");item.className="tenant-card";const title=document.createElement("strong");title.textContent=row.reference+" · V"+row.version;item.append(title);
+      for(const value of [row.category+" · "+row.usage_type,tariffMethods[row.method],row.method==="revenue"?(row.rate/100)+" %":row.rate+" unités minimales "+row.currency,row.starts_on+" — "+row.ends_on]){const p=document.createElement("p");p.textContent=value;item.append(p);}
+      const quote=document.createElement("button");quote.type="button";quote.textContent="Estimer";quote.addEventListener("click",()=>{if(!busy)selectTariff(row);});item.append(quote);
+      if(identity?.role==="admin"){const copy=document.createElement("button");copy.type="button";copy.textContent="Préparer une nouvelle version";copy.addEventListener("click",()=>{if(busy)return;for(const [field,key] of Object.entries({reference:"reference",version:"version",category:"category",usage:"usage_type",method:"method",currency:"currency",rate:"rate",start:"starts_on",end:"ends_on"}))el("tariff-"+field).value=row[key];});item.append(copy);}list.append(item);}
+    if(!rows.length){const p=document.createElement("p");p.textContent="Aucun barème sur cette page.";list.append(p);}
+    el("tariff-prev").disabled=tariffOffset===0;el("tariff-next").disabled=rows.length<20;el("tariff-page").textContent="Page "+(tariffOffset/20+1);
+  }
+  el("tariff-refresh").addEventListener("click",()=>run(()=>loadTariffs()));
+  el("tariff-prev").addEventListener("click",()=>run(()=>loadTariffs(Math.max(0,tariffOffset-20))));
+  el("tariff-next").addEventListener("click",()=>run(()=>loadTariffs(tariffOffset+20)));
+  action("tariff-form",async()=>{const data={reference:el("tariff-reference").value,expected_version:Number(el("tariff-version").value),category:el("tariff-category").value,usage_type:el("tariff-usage").value,method:el("tariff-method").value,currency:el("tariff-currency").value,rate:Number(el("tariff-rate").value),starts_on:el("tariff-start").value,ends_on:el("tariff-end").value};await api(tariffBase,"POST",data,true);if(!token)return;el("tariff-form").reset();await loadTariffs(0);notice("Version de barème créée.");});
+  action("quote-form",async()=>{if(!selectedTariff)return;el("quote-result").textContent="";const data={license_id:el("quote-license").value.trim(),usage_date:el("quote-date").value};if(selectedTariff.method==="revenue")data.revenue_minor=Number(el("quote-revenue").value);if(["capacity","frequency"].includes(selectedTariff.method))data.quantity=Number(el("quote-quantity").value);const result=await api(tariffBase+"/"+encodeURIComponent(selectedTariff.id)+"/quote","POST",data,true);if(!token)return;el("quote-result").textContent="Estimation : "+result.amount_minor+" unités minimales "+result.currency+" (version "+result.tariff_version+").";});
   el("saved").addEventListener("change",()=>el("finish").disabled=!el("saved").checked);
   el("finish").addEventListener("click",()=>{clearSession();show("login");notice("MFA activé. Reconnectez-vous avec un nouveau code TOTP.");});
   el("open-invite").addEventListener("click",()=>{if(!busy)show("invite");});
