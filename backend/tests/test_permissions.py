@@ -9,7 +9,8 @@ def test_non_admin_cannot_write_modules(role):
     assert exc.value.status_code == 403
 
 def test_admin_can_write():
-    assert require_permission("modules:write")({"role":"admin","mfa_enabled":True}) == {"role":"admin"}
+    identity = {"role":"admin","mfa_enabled":True}
+    assert require_permission("modules:write")(identity) == identity
 
 def test_unknown_permission_denied():
     with pytest.raises(HTTPException):
