@@ -100,6 +100,42 @@ def main():
                 conn.execute(text("UPDATE platform_admins SET active=false WHERE account_id=:id"), {"id":account})
             assert client.get("/api/v1/platform/me",headers=headers).status_code == 403
             assert client.get("/api/v1/platform/organizations",headers=headers).status_code == 403
+            collaborator, outside = uuid4(), uuid4()
+            with admin.begin() as conn:
+                for member_id, org in ((collaborator,org_a),(outside,org_b)):
+                    conn.execute(text("INSERT INTO accounts(id,email,password_hash) VALUES (:id,:email,:hash)"), {"id":member_id,"email":f"{member_id}@example.invalid","hash":hasher.hash(password)})
+                    conn.execute(text("INSERT INTO memberships(account_id,organization_id,role) VALUES (:id,:org,'artist')"), {"id":member_id,"org":org})
+            try:
+                members_url = "/api/v1/organization/members"
+                members = client.get(members_url,headers=headers)
+                assert members.status_code == 200, members.text
+                assert str(collaborator) in [row["account_id"] for row in members.json()]
+                assert str(outside) not in [row["account_id"] for row in members.json()]
+                change = {"role":"manager","active":False}
+                assert client.patch(f"{members_url}/{outside}",headers=headers,json=change).status_code == 404
+                assert client.patch(f"{members_url}/{account}",headers=headers,json=change).status_code == 403
+                assert client.patch(f"{members_url}/{collaborator}",headers=headers,json={"role":"admin","active":True}).status_code == 422
+                member_login = {"email":f"{collaborator}@example.invalid","password":password,"organization_id":str(org_a)}
+                logged_member = client.post("/api/v1/auth/login",json=member_login)
+                assert logged_member.status_code == 200
+                member_headers = {"Authorization":"Bearer "+logged_member.json()["access_token"]}
+                assert client.get(members_url,headers=member_headers).status_code == 403
+                assert client.patch(f"{members_url}/{collaborator}",headers=headers,json=change).status_code == 200
+                assert client.get("/api/v1/auth/me",headers=member_headers).status_code == 401
+                assert client.post("/api/v1/auth/login",json=member_login).status_code == 401
+                assert client.patch(f"{members_url}/{collaborator}",headers=headers,json={"role":"auditor","active":True}).status_code == 200
+                assert client.get("/api/v1/auth/me",headers=member_headers).status_code == 401
+                logged_member = client.post("/api/v1/auth/login",json=member_login)
+                assert logged_member.status_code == 200
+                member_headers = {"Authorization":"Bearer "+logged_member.json()["access_token"]}
+                assert client.get("/api/v1/auth/me",headers=member_headers).json()["role"] == "auditor"
+                with admin.begin() as conn:
+                    assert conn.execute(text("SELECT count(*) FROM audit_events WHERE organization_id=:org AND action='member.updated'"),{"org":org_a}).scalar_one() == 2
+            finally:
+                with admin.begin() as conn:
+                    for member_id in (collaborator,outside):
+                        conn.execute(text("DELETE FROM memberships WHERE account_id=:id"),{"id":member_id})
+                        conn.execute(text("DELETE FROM accounts WHERE id=:id"),{"id":member_id})
             assert client.put("/api/v1/organization/modules/artists",headers=headers,json={"enabled":True}).status_code == 200
             assert client.put("/api/v1/organization/modules/unknown",headers=headers,json={"enabled":True}).status_code == 404
             with admin.begin() as conn:
