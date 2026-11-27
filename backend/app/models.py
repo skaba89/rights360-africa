@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, String, Text, Uuid, false, true
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import BigInteger, Identity, func, Boolean, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, String, Text, Uuid, false, true
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 class Base(DeclarativeBase):
@@ -40,3 +41,13 @@ class AuthSession(Base):
     account_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+class AuditEvent(Base):
+    __tablename__ = "audit_events"
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    actor_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    action: Mapped[str] = mapped_column(String(100), nullable=False)
+    resource_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    details: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
