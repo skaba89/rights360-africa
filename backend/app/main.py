@@ -42,6 +42,8 @@ from app.analytics import router as analytics_router
 app.include_router(analytics_router)
 from app.exchange import router as exchange_router
 app.include_router(exchange_router)
+from app.acoustic_api import router as acoustic_router
+app.include_router(acoustic_router)
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def home():
