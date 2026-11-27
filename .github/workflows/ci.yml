@@ -54,6 +54,9 @@ jobs:
         run: docker compose exec -T db psql -U rights360 -d rights360 -v ON_ERROR_STOP=1 -c 'SELECT id, slug, name FROM organizations LIMIT 0;'
       - name: Tenant isolation checks
         run: docker compose exec -T db psql -U rights360 -d rights360 -v ON_ERROR_STOP=1 < backend/tests/tenant_isolation.sql
+      - name: Authentication integration checks
+        run: |
+          docker compose run --rm --no-deps -T --user 0 -v "${PWD}/backend:/workspace:ro" -w /workspace migrate sh -c 'python -m pip install --no-cache-dir -r requirements-dev.txt && PYTHONPATH=/workspace python tests/auth_integration.py'
       - name: Capture container diagnostics
         if: always()
         run: |
