@@ -300,6 +300,19 @@ def main():
             assert len(client.get(accounting_url,headers=headers).json())==3
             balances=client.get("/api/v1/accounting/balances",headers=headers).json()
             assert sum(int(x["balance_minor"]) for x in balances)==0
+            payout_url="/api/v1/payouts"
+            payout_artist=dist.json()["lines"][0]["artist_id"]
+            with admin.begin() as conn:
+                conn.execute(text("UPDATE artists SET status='active' WHERE id=:id"),{"id":payout_artist})
+            payout_data={"distribution_id":dist.json()["id"],"artist_id":payout_artist,"channel":"orange_money"}
+            payout=client.post(payout_url,headers=headers,json=payout_data)
+            assert payout.status_code==201,payout.text
+            assert payout.json()["execution_enabled"] is False
+            assert client.post(payout_url,headers=headers,json=payout_data).status_code==409
+            review_url=payout_url+"/"+payout.json()["id"]+"/reviews"
+            assert client.post(review_url,headers=headers,json={"decision":"approve"}).status_code==409
+            assert client.get(payout_url,headers=headers).json()[0]["status"]=="pending"
+
 
 
 
@@ -382,6 +395,8 @@ def main():
             from app.login_limits import bucket_key
             conn.execute(text("DELETE FROM login_buckets WHERE bucket IN (:account,:peer)"), {"account":bucket_key("account",email),"peer":bucket_key("peer","testclient")})
             conn.execute(text("DELETE FROM audit_events WHERE organization_id=:org"), {"org":org_a})
+            conn.execute(text("DELETE FROM payout_reviews WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
+            conn.execute(text("DELETE FROM payout_orders WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM accounting_lines WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM accounting_entries WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
             conn.execute(text("DELETE FROM royalty_distribution_lines WHERE organization_id IN (:a,:b)"),{"a":org_a,"b":org_b})
