@@ -53,6 +53,14 @@ def main():
             platform = client.get("/api/v1/platform/me",headers=headers)
             assert platform.status_code == 200
             assert platform.json()["platform_role"] == "super_admin"
+            entitlement_url=f"/api/v1/platform/organizations/{org_a}/entitlements"
+            assert client.put("/api/v1/organization/modules/artists",headers=headers,json={"enabled":True}).status_code == 403
+            assert client.put(entitlement_url+"/artists",headers=headers,json={"granted":True,"expires_at":"2000-01-01T00:00:00Z"}).status_code == 422
+            assert client.put(entitlement_url+"/artists",headers=headers,json={"granted":True}).status_code == 200
+            assert client.get(entitlement_url,headers=headers).json()[0]["granted"] is True
+            assert client.put(entitlement_url+"/artists",headers=headers,json={"granted":False}).status_code == 200
+            assert client.put("/api/v1/organization/modules/artists",headers=headers,json={"enabled":True}).status_code == 403
+            assert client.put(entitlement_url+"/artists",headers=headers,json={"granted":True}).status_code == 200
             slug = "test-" + str(uuid4())
             created = client.post("/api/v1/platform/organizations",headers=headers,json={"slug":slug,"name":"Test client"})
             assert created.status_code == 201, created.text
@@ -100,6 +108,7 @@ def main():
                 conn.execute(text("UPDATE platform_admins SET active=false WHERE account_id=:id"), {"id":account})
             assert client.get("/api/v1/platform/me",headers=headers).status_code == 403
             assert client.get("/api/v1/platform/organizations",headers=headers).status_code == 403
+            assert client.put(entitlement_url+"/artists",headers=headers,json={"granted":True}).status_code == 403
             collaborator, outside = uuid4(), uuid4()
             with admin.begin() as conn:
                 for member_id, org in ((collaborator,org_a),(outside,org_b)):
@@ -138,6 +147,10 @@ def main():
                         conn.execute(text("DELETE FROM accounts WHERE id=:id"),{"id":member_id})
             assert client.put("/api/v1/organization/modules/artists",headers=headers,json={"enabled":True}).status_code == 200
             assert client.put("/api/v1/organization/modules/unknown",headers=headers,json={"enabled":True}).status_code == 404
+            assert next(m for m in client.get("/api/v1/organization/modules",headers=headers).json() if m["module_key"]=="artists")["enabled"] is True
+            with admin.begin() as conn:
+                conn.execute(text("UPDATE module_entitlements SET expires_at=now()-interval '1 second' WHERE organization_id=:org"),{"org":org_a})
+            assert next(m for m in client.get("/api/v1/organization/modules",headers=headers).json() if m["module_key"]=="artists")["enabled"] is False
             with admin.begin() as conn:
                 assert conn.execute(text("SELECT count(*) FROM audit_events WHERE organization_id=:org AND action='module.updated'"), {"org":org_a}).scalar_one() == 1
                 conn.execute(text("UPDATE memberships SET role='auditor' WHERE account_id=:id"), {"id":account})
@@ -202,6 +215,8 @@ def main():
             from app.login_limits import bucket_key
             conn.execute(text("DELETE FROM login_buckets WHERE bucket IN (:account,:peer)"), {"account":bucket_key("account",email),"peer":bucket_key("peer","testclient")})
             conn.execute(text("DELETE FROM audit_events WHERE organization_id=:org"), {"org":org_a})
+            conn.execute(text("DELETE FROM module_entitlements WHERE organization_id=:org"),{"org":org_a})
+            conn.execute(text("DELETE FROM platform_audit_events WHERE organization_id=:org"),{"org":org_a})
             conn.execute(text("DELETE FROM tenant_modules WHERE organization_id=:org"), {"org":org_a})
             conn.execute(text("DELETE FROM memberships WHERE account_id=:id"), {"id":account})
             conn.execute(text("DELETE FROM accounts WHERE id=:id"), {"id":account})

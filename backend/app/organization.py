@@ -22,13 +22,16 @@ def organization(identity=Depends(require_permission("organization:read"))):
 def modules(identity=Depends(require_permission("modules:read"))):
     with tenant_transaction(identity["organization_id"]) as conn:
         stored = dict(conn.execute(text("SELECT module_key,enabled FROM tenant_modules")).all())
-    return [{"module_key":key,"enabled":stored.get(key,False)} for key in sorted(MODULES)]
+        entitled = set(conn.execute(text("SELECT module_key FROM module_entitlements WHERE granted AND (expires_at IS NULL OR expires_at>now())")).scalars())
+    return [{"module_key":key,"enabled":stored.get(key,False) and key in entitled,"entitled":key in entitled} for key in sorted(MODULES)]
 
 @router.put("/modules/{module_key}")
 def update_module(module_key: str, payload: ModuleUpdate, identity=Depends(require_permission("modules:write"))):
     if module_key not in MODULES:
         raise HTTPException(status_code=404, detail="Unknown module")
     with tenant_transaction(identity["organization_id"]) as conn:
+        if payload.enabled and not conn.execute(text("SELECT EXISTS(SELECT 1 FROM module_entitlements WHERE module_key=:key AND granted AND (expires_at IS NULL OR expires_at>now()))"),{"key":module_key}).scalar_one():
+            raise HTTPException(status_code=403,detail="Module not entitled")
         conn.execute(text("""INSERT INTO tenant_modules(organization_id,module_key,enabled)
             VALUES (:org,:key,:enabled)
             ON CONFLICT (organization_id,module_key) DO UPDATE SET enabled=EXCLUDED.enabled"""),
