@@ -17,6 +17,7 @@ services:
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       RUNTIME_DB_PASSWORD: ${RUNTIME_DB_PASSWORD:?Set RUNTIME_DB_PASSWORD in .env}
+      MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY:?Set MFA_ENCRYPTION_KEY in .env}
     command: ["sh", "-c", "python -m app.provision_runtime && alembic upgrade head"]
     depends_on:
       db:
@@ -25,6 +26,7 @@ services:
     build: ./backend
     environment:
       RUNTIME_DB_PASSWORD: ${RUNTIME_DB_PASSWORD:?Set RUNTIME_DB_PASSWORD in .env}
+      MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY:?Set MFA_ENCRYPTION_KEY in .env}
     depends_on:
       migrate:
         condition: service_completed_successfully
