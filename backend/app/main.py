@@ -1,6 +1,6 @@
 from pathlib import Path
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 
 from app.auth import router as auth_router
 
@@ -35,3 +35,23 @@ def ready():
     except (SQLAlchemyError, KeyError):
         raise HTTPException(status_code=503, detail="Database unavailable")
     return {"status": "ready"}
+
+PORTAL_HEADERS = {
+    "Cache-Control": "no-store",
+    "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "X-Frame-Options": "DENY",
+}
+
+@app.get("/portal", include_in_schema=False)
+def portal():
+    return HTMLResponse((Path(__file__).parent / "portal.html").read_text(encoding="utf-8"),headers=PORTAL_HEADERS)
+
+@app.get("/portal.css", include_in_schema=False)
+def portal_css():
+    return FileResponse(Path(__file__).parent / "portal.css",media_type="text/css",headers=PORTAL_HEADERS)
+
+@app.get("/portal.js", include_in_schema=False)
+def portal_js():
+    return FileResponse(Path(__file__).parent / "portal.js",media_type="application/javascript",headers=PORTAL_HEADERS)
