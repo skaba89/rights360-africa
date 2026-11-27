@@ -14,6 +14,8 @@ from app.invitations import router as invitations_router
 app.include_router(invitations_router)
 from app.members import router as members_router
 app.include_router(members_router)
+from app.member_invitations import router as member_invitations_router
+app.include_router(member_invitations_router)
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def home():
