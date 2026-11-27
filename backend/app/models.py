@@ -119,7 +119,7 @@ class MemberInvitation(Base):
 
 class Artist(Base):
     __tablename__ = "artists"
-    __table_args__ = (UniqueConstraint("organization_id","member_number",name="artist_member_number_unique"),CheckConstraint("status IN ('pending','active','suspended','archived')",name="artist_status_valid"),Index("ix_artists_org_name","organization_id","legal_name","id"))
+    __table_args__ = (UniqueConstraint("organization_id","member_number",name="artist_member_number_unique"),UniqueConstraint("organization_id","id",name="artist_org_id_unique"),CheckConstraint("status IN ('pending','active','suspended','archived')",name="artist_status_valid"),Index("ix_artists_org_name","organization_id","legal_name","id"))
     id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
     organization_id: Mapped[uuid.UUID] = mapped_column(Uuid,ForeignKey("organizations.id"),nullable=False)
     member_number: Mapped[str] = mapped_column(String(50),nullable=False)
@@ -128,5 +128,26 @@ class Artist(Base):
     email: Mapped[str | None] = mapped_column(String(254))
     phone: Mapped[str | None] = mapped_column(String(40))
     status: Mapped[str] = mapped_column(String(20),nullable=False,server_default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False,server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False,server_default=func.now())
+
+class Work(Base):
+    __tablename__ = "works"
+    __table_args__ = (
+        ForeignKeyConstraint(["organization_id","primary_artist_id"],["artists.organization_id","artists.id"],name="work_artist_same_org"),
+        UniqueConstraint("organization_id","reference",name="work_reference_unique"),
+        UniqueConstraint("organization_id","iswc",name="work_iswc_unique"),
+        CheckConstraint("category IN ('music','literary','audiovisual','visual','other')",name="work_category_valid"),
+        CheckConstraint("status IN ('draft','registered','archived')",name="work_status_valid"),
+        CheckConstraint("iswc IS NULL OR (category='music' AND iswc ~ '^T[0-9]{10}$')",name="work_iswc_format"),
+        Index("ix_works_org_title","organization_id","title","id"))
+    id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid,ForeignKey("organizations.id"),nullable=False)
+    reference: Mapped[str] = mapped_column(String(50),nullable=False)
+    title: Mapped[str] = mapped_column(String(250),nullable=False)
+    category: Mapped[str] = mapped_column(String(30),nullable=False)
+    primary_artist_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    iswc: Mapped[str | None] = mapped_column(String(11))
+    status: Mapped[str] = mapped_column(String(20),nullable=False,server_default="draft")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False,server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False,server_default=func.now())

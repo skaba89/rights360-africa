@@ -2,7 +2,7 @@
 (() => {
   const el = id => document.getElementById(id);
   const views = ["login","invite","mfa","recovery","session","platform","institution"];
-  let token = null, timer = null, busy = false, selected = null, offset = 0, organizations = [], memberOffset = 0, identity = null, artistOffset = 0, editingArtist = null;
+  let token = null, timer = null, busy = false, selected = null, offset = 0, organizations = [], memberOffset = 0, identity = null, artistOffset = 0, editingArtist = null, workOffset = 0, editingWork = null;
   function notice(message="",error=false){el("notice").textContent=message;el("notice").classList.toggle("error",error);}
   function show(view){views.forEach(v=>{el(v+"-view").hidden=v!==view;});notice();}
   function clearSession(){resetInstitution();resetPlatform();token=null;clearTimeout(timer);timer=null;el("secret").textContent="";el("recovery").textContent="";el("saved").checked=false;el("finish").disabled=true;el("confirm-form").hidden=true;el("setup-form").hidden=false;document.querySelectorAll("form").forEach(f=>f.reset());}
@@ -72,7 +72,7 @@
   const tenantBase="/api/v1/organization";
   const roles={admin:"Administrateur",manager:"Gestionnaire",auditor:"Auditeur",artist:"Artiste"};
   function hideMemberInvitation(){el("member-invite-token").textContent="";el("member-invite-id").textContent="";el("member-invite-result").hidden=true;}
-  function resetInstitution(){resetArtists();identity=null;memberOffset=0;hideMemberInvitation();for(const id of ["institution-name","institution-role","institution-module-list","member-list","member-page"])el(id).replaceChildren();el("institution-modules").hidden=true;el("institution-members").hidden=true;}
+  function resetInstitution(){resetWorks();resetArtists();identity=null;memberOffset=0;hideMemberInvitation();for(const id of ["institution-name","institution-role","institution-module-list","member-list","member-page"])el(id).replaceChildren();el("institution-modules").hidden=true;el("institution-members").hidden=true;}
   async function loadInstitution(){
     const me=await api("/api/v1/auth/me","GET",undefined,true);if(!token)return;
     if(me.mfa_required){identity=null;show("mfa");return;}
@@ -92,12 +92,14 @@
     const list=el("institution-module-list");list.replaceChildren();
     const artistEnabled=rows.some(row=>row.module_key==="artists"&&row.enabled);
     if(!artistEnabled)resetArtists();
+    if(!rows.some(row=>row.module_key==="works"&&row.enabled))resetWorks();
     for(const row of rows){
       const item=document.createElement("article");item.className="tenant-card";
       const title=document.createElement("strong");title.textContent=modules[row.module_key]||row.module_key;item.append(title);
-      const status=document.createElement("p");status.textContent=row.enabled?(row.module_key==="artists"?"Activé — registre disponible":"Activé — métier à développer"):row.entitled?"Autorisé, désactivé":"Licence non attribuée ou expirée";item.append(status);
+      const status=document.createElement("p");status.textContent=row.enabled?(["artists","works"].includes(row.module_key)?"Activé — registre disponible":"Activé — métier à développer"):row.entitled?"Autorisé, désactivé":"Licence non attribuée ou expirée";item.append(status);
       if(admin&&(row.entitled||row.enabled)){const button=document.createElement("button");button.type="button";button.textContent=row.enabled?"Désactiver":"Activer";button.addEventListener("click",()=>run(async()=>{await api(tenantBase+"/modules/"+encodeURIComponent(row.module_key),"PUT",{enabled:!row.enabled},true);if(!token)return;await loadTenantModules(true);notice("Configuration enregistrée.");}));item.append(button);}
       if(row.module_key==="artists"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir le registre";open.addEventListener("click",()=>run(async()=>{resetArtists();el("artist-workspace").hidden=false;el("artist-form").hidden=!["admin","manager"].includes(identity?.role);await loadArtists(0);}));item.append(open);}
+      if(row.module_key==="works"&&row.enabled){const open=document.createElement("button");open.type="button";open.textContent="Ouvrir les œuvres";open.addEventListener("click",()=>run(async()=>{resetWorks();el("work-workspace").hidden=false;el("work-form").hidden=!["admin","manager"].includes(identity?.role);await loadWorks(0);}));item.append(open);}
       list.append(item);
     }
   }
@@ -141,7 +143,7 @@
     if(!rows.length){const p=document.createElement("p");p.textContent="Aucun dossier sur cette page.";list.append(p);}
     for(const row of rows){const item=document.createElement("article");item.className="tenant-card";
       const title=document.createElement("strong");title.textContent=row.legal_name;item.append(title);
-      for(const value of [row.member_number+" · "+artistStatuses[row.status],row.stage_name,row.email,row.phone])if(value){const p=document.createElement("p");p.textContent=value;item.append(p);}
+      for(const value of [row.member_number+" · "+artistStatuses[row.status],row.stage_name,row.email,row.phone,"UUID : "+row.id])if(value){const p=document.createElement("p");p.textContent=value;item.append(p);}
       if(["admin","manager"].includes(identity?.role)){const button=document.createElement("button");button.type="button";button.textContent="Modifier";button.addEventListener("click",()=>{if(!busy)editArtist(row);});item.append(button);}list.append(item);}
     el("artist-prev").disabled=artistOffset===0;el("artist-next").disabled=rows.length<20;el("artist-page").textContent="Page "+(artistOffset/20+1);
   }
@@ -150,6 +152,29 @@
   el("artist-next").addEventListener("click",()=>run(()=>loadArtists(artistOffset+20)));
   el("artist-new").addEventListener("click",()=>{if(!busy)editArtist(null);});
   action("artist-form",async()=>{const data={member_number:el("artist-number").value,legal_name:el("artist-name").value,stage_name:el("artist-stage").value||null,email:el("artist-email").value||null,phone:el("artist-phone").value||null,status:el("artist-status").value};await api(artistBase+(editingArtist?"/"+encodeURIComponent(editingArtist):""),editingArtist?"PUT":"POST",data,true);if(!token)return;editArtist(null);await loadArtists(0);notice("Dossier enregistré.");});
+
+  const workBase="/api/v1/works";
+  const workCategories={music:"Musique",literary:"Littéraire",audiovisual:"Audiovisuel",visual:"Arts visuels",other:"Autre"};
+  const workStatuses={draft:"Brouillon",registered:"Enregistrée",archived:"Archivée"};
+  function resetWorks(){editingWork=null;workOffset=0;el("work-workspace").hidden=true;el("work-list").replaceChildren();el("work-form").reset();el("work-search").reset();el("work-form-title").textContent="Nouvelle œuvre";}
+  function editWork(row){editingWork=row?.id||null;el("work-form").reset();el("work-form-title").textContent=row?"Modifier l’œuvre":"Nouvelle œuvre";if(row){for(const [field,key] of Object.entries({reference:"reference",title:"title",category:"category",artist:"primary_artist_id",iswc:"iswc",status:"status"}))el("work-"+field).value=row[key]||"";}}
+  async function loadWorks(nextOffset=workOffset){
+    const query=new URLSearchParams({q:el("work-query").value,limit:"20",offset:String(nextOffset)});
+    if(el("work-filter").value)query.set("category",el("work-filter").value);
+    const rows=await api(workBase+"?"+query,"GET",undefined,true);if(!token)return;
+    workOffset=nextOffset;const list=el("work-list");list.replaceChildren();
+    if(!rows.length){const p=document.createElement("p");p.textContent="Aucune œuvre sur cette page.";list.append(p);}
+    for(const row of rows){const item=document.createElement("article");item.className="tenant-card";
+      const title=document.createElement("strong");title.textContent=row.title;item.append(title);
+      for(const value of [row.reference+" · "+workCategories[row.category]+" · "+workStatuses[row.status],row.iswc,"Artiste : "+row.primary_artist_id])if(value){const p=document.createElement("p");p.textContent=value;item.append(p);}
+      if(["admin","manager"].includes(identity?.role)){const button=document.createElement("button");button.type="button";button.textContent="Modifier";button.addEventListener("click",()=>{if(!busy)editWork(row);});item.append(button);}list.append(item);}
+    el("work-prev").disabled=workOffset===0;el("work-next").disabled=rows.length<20;el("work-page").textContent="Page "+(workOffset/20+1);
+  }
+  action("work-search",()=>loadWorks(0));
+  el("work-prev").addEventListener("click",()=>run(()=>loadWorks(Math.max(0,workOffset-20))));
+  el("work-next").addEventListener("click",()=>run(()=>loadWorks(workOffset+20)));
+  el("work-new").addEventListener("click",()=>{if(!busy)editWork(null);});
+  action("work-form",async()=>{const data={reference:el("work-reference").value,title:el("work-title").value,category:el("work-category").value,primary_artist_id:el("work-artist").value.trim(),iswc:el("work-iswc").value.trim()||null,status:el("work-status").value};await api(workBase+(editingWork?"/"+encodeURIComponent(editingWork):""),editingWork?"PUT":"POST",data,true);if(!token)return;editWork(null);await loadWorks(0);notice("Œuvre enregistrée.");});
   el("saved").addEventListener("change",()=>el("finish").disabled=!el("saved").checked);
   el("finish").addEventListener("click",()=>{clearSession();show("login");notice("MFA activé. Reconnectez-vous avec un nouveau code TOTP.");});
   el("open-invite").addEventListener("click",()=>{if(!busy)show("invite");});
