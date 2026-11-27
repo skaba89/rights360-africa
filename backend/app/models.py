@@ -194,7 +194,7 @@ class Operator(Base):
 
 class ExploitationLicense(Base):
     __tablename__ = "exploitation_licenses"
-    __table_args__ = (ForeignKeyConstraint(["organization_id","operator_id"],["operators.organization_id","operators.id"]),ForeignKeyConstraint(["organization_id","work_id"],["works.organization_id","works.id"]),UniqueConstraint("organization_id","reference",name="exploitation_reference_unique"),CheckConstraint("ends_on>=starts_on",name="exploitation_dates_valid"),CheckConstraint("status IN ('draft','active','revoked')",name="exploitation_status_valid"))
+    __table_args__ = (ForeignKeyConstraint(["organization_id","operator_id"],["operators.organization_id","operators.id"]),ForeignKeyConstraint(["organization_id","work_id"],["works.organization_id","works.id"]),UniqueConstraint("organization_id","reference",name="exploitation_reference_unique"),UniqueConstraint("organization_id","id",name="license_org_id_unique"),CheckConstraint("ends_on>=starts_on",name="exploitation_dates_valid"),CheckConstraint("status IN ('draft','active','revoked')",name="exploitation_status_valid"))
     id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
     organization_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
     operator_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
@@ -211,6 +211,7 @@ class Tariff(Base):
     __tablename__ = "tariffs"
     __table_args__ = (
         UniqueConstraint("organization_id","reference","version",name="tariff_version_unique"),
+        UniqueConstraint("organization_id","id",name="tariff_org_id_unique"),
         CheckConstraint("version>0 AND starts_on<=ends_on AND rate>0 AND rate<=1000000000000",name="tariff_values_valid"),
         CheckConstraint("category IN ('radio','television','hotel','restaurant','event','digital','other')",name="tariff_category_valid"),
         CheckConstraint("method IN ('flat','revenue','capacity','frequency') AND (method<>'revenue' OR rate<=10000)",name="tariff_method_valid"),
@@ -226,4 +227,31 @@ class Tariff(Base):
     rate: Mapped[int] = mapped_column(BigInteger,nullable=False)
     starts_on: Mapped[date] = mapped_column(Date,nullable=False)
     ends_on: Mapped[date] = mapped_column(Date,nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False,server_default=func.now())
+
+class RoyaltyInvoice(Base):
+    __tablename__ = "royalty_invoices"
+    __table_args__ = (ForeignKeyConstraint(["organization_id","license_id"],["exploitation_licenses.organization_id","exploitation_licenses.id"]),ForeignKeyConstraint(["organization_id","tariff_id"],["tariffs.organization_id","tariffs.id"]),UniqueConstraint("organization_id","id",name="invoice_org_id_unique"),UniqueConstraint("organization_id","reference",name="invoice_reference_unique"),UniqueConstraint("organization_id","license_id","usage_date",name="invoice_usage_unique"),CheckConstraint("amount_minor>0 AND due_on>=usage_date",name="invoice_values_valid"))
+    id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    reference: Mapped[str] = mapped_column(String(50),nullable=False)
+    license_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    tariff_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    usage_date: Mapped[date] = mapped_column(Date,nullable=False)
+    due_on: Mapped[date] = mapped_column(Date,nullable=False)
+    quantity: Mapped[int | None] = mapped_column(BigInteger)
+    revenue_minor: Mapped[int | None] = mapped_column(BigInteger)
+    amount_minor: Mapped[int] = mapped_column(BigInteger,nullable=False)
+    currency: Mapped[str] = mapped_column(String(3),nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False,server_default=func.now())
+
+class RoyaltyReceipt(Base):
+    __tablename__ = "royalty_receipts"
+    __table_args__ = (ForeignKeyConstraint(["organization_id","invoice_id"],["royalty_invoices.organization_id","royalty_invoices.id"]),UniqueConstraint("organization_id","reference",name="receipt_reference_unique"),CheckConstraint("amount_minor>0",name="receipt_amount_valid"))
+    id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    invoice_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    reference: Mapped[str] = mapped_column(String(50),nullable=False)
+    amount_minor: Mapped[int] = mapped_column(BigInteger,nullable=False)
+    received_on: Mapped[date] = mapped_column(Date,nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False,server_default=func.now())
