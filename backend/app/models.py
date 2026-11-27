@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, date
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy import BigInteger, Integer, Identity, func, Boolean, CheckConstraint, Date, DateTime, ForeignKey, ForeignKeyConstraint, String, Text, Uuid, UniqueConstraint, Index, false, true
+from sqlalchemy import JSON, BigInteger, Integer, Identity, func, Boolean, CheckConstraint, Date, DateTime, ForeignKey, ForeignKeyConstraint, String, Text, Uuid, UniqueConstraint, Index, false, true
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 class Base(DeclarativeBase):
@@ -324,3 +324,19 @@ class PayoutReview(Base):
     reviewer_id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
     decision: Mapped[str] = mapped_column(String(20),nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False,server_default=func.now())
+
+class FieldVisit(Base):
+    __tablename__ = "field_visits"
+    __table_args__ = (ForeignKeyConstraint(["organization_id","operator_id"],["operators.organization_id","operators.id"]),CheckConstraint("finding IN ('observed','suspected_noncompliance','followup')",name="visit_finding_valid"),CheckConstraint("(latitude_e6 IS NULL AND longitude_e6 IS NULL) OR (latitude_e6 IS NOT NULL AND longitude_e6 IS NOT NULL AND latitude_e6 BETWEEN -90000000 AND 90000000 AND longitude_e6 BETWEEN -180000000 AND 180000000)",name="visit_coordinates_valid"),Index("ix_field_visits_org_date","organization_id","visited_at"))
+    id: Mapped[uuid.UUID] = mapped_column(Uuid,primary_key=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    operator_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    agent_id: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
+    visited_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False)
+    latitude_e6: Mapped[int | None] = mapped_column(Integer)
+    longitude_e6: Mapped[int | None] = mapped_column(Integer)
+    finding: Mapped[str] = mapped_column(String(30),nullable=False)
+    notes: Mapped[str] = mapped_column(String(2000),nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64),nullable=False)
+    license_snapshot: Mapped[dict] = mapped_column(JSON,nullable=False)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False,server_default=func.now())
