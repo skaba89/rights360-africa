@@ -637,3 +637,141 @@ class RightsClaim(Base):
     proposed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     reviewed_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+# ── PHASE 4: Finance et comptabilité SYSCOHADA (migration 0030) ──────────────
+# Configurable plan comptable + generic->SYSCOHADA mapping + journaux +
+# fiscal periods with multi-level close + contrepassations + withholding tax.
+# Existing accounting_entries/lines (0021) keep their generic account_key; the
+# chart_of_accounts + account_mappings layer lets the trial balance be produced
+# in SYSCOHADA account_code order without rewriting the double-entry engine.
+
+
+class ChartOfAccount(Base):
+    __tablename__ = "chart_of_accounts"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "account_code", name="chart_account_code_unique"),
+        UniqueConstraint("organization_id", "id", name="chart_account_org_id_unique"),
+        CheckConstraint("syscohada_class IN ('1','2','3','4','5','6','7','8')", name="chart_class_valid"),
+        CheckConstraint("account_type IN ('asset','liability','equity','revenue','expense')", name="chart_type_valid"),
+        CheckConstraint("account_code ~ '^[0-9]{1,8}$'", name="chart_code_format"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    account_code: Mapped[str] = mapped_column(String(20), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    syscohada_class: Mapped[str] = mapped_column(String(1), nullable=False)
+    account_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    parent_account_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    is_postable: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=true())
+    created_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class AccountMapping(Base):
+    __tablename__ = "account_mappings"
+    __table_args__ = (
+        ForeignKeyConstraint(["organization_id", "account_code"],
+                             ["chart_of_accounts.organization_id", "chart_of_accounts.account_code"]),
+        UniqueConstraint("organization_id", "generic_key", name="account_mapping_key_unique"),
+        UniqueConstraint("organization_id", "id", name="account_mapping_org_id_unique"),
+        CheckConstraint("generic_key IN ('receivable','royalties_unallocated','cash_unverified','management_commission','beneficiary_payable')",
+                        name="account_mapping_key_valid"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    generic_key: Mapped[str] = mapped_column(String(40), nullable=False)
+    account_code: Mapped[str] = mapped_column(String(20), nullable=False)
+
+
+class Journal(Base):
+    __tablename__ = "journals"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "code", name="journal_code_unique"),
+        UniqueConstraint("organization_id", "id", name="journal_org_id_unique"),
+        CheckConstraint("kind IN ('sales','receipts','general','payouts')", name="journal_kind_valid"),
+        CheckConstraint("code ~ '^[A-Z0-9]{1,10}$'", name="journal_code_format"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    code: Mapped[str] = mapped_column(String(10), nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    created_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class FiscalPeriod(Base):
+    __tablename__ = "fiscal_periods"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "fiscal_year", "period_index", name="fiscal_period_unique"),
+        UniqueConstraint("organization_id", "id", name="fiscal_period_org_id_unique"),
+        CheckConstraint("status IN ('open','closed','locked')", name="fiscal_period_status_valid"),
+        CheckConstraint("period_index BETWEEN 0 AND 12", name="fiscal_period_index_valid"),
+        CheckConstraint("ends_on >= starts_on", name="fiscal_period_dates_valid"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    fiscal_year: Mapped[int] = mapped_column(Integer, nullable=False)
+    period_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    starts_on: Mapped[date] = mapped_column(Date, nullable=False)
+    ends_on: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(10), nullable=False, server_default="open")
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class FiscalPeriodReview(Base):
+    __tablename__ = "fiscal_period_reviews"
+    __table_args__ = (
+        ForeignKeyConstraint(["organization_id", "period_id"],
+                             ["fiscal_periods.organization_id", "fiscal_periods.id"], ondelete="CASCADE"),
+        UniqueConstraint("organization_id", "id", name="fiscal_review_org_id_unique"),
+        UniqueConstraint("organization_id", "period_id", "reviewer_id", name="fiscal_review_no_duplicate"),
+        CheckConstraint("decision IN ('approve','reject')", name="fiscal_review_decision_valid"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    period_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    reviewer_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("accounts.id"), nullable=False)
+    decision: Mapped[str] = mapped_column(String(20), nullable=False)
+    rationale: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class AccountingReversal(Base):
+    __tablename__ = "accounting_reversals"
+    __table_args__ = (
+        ForeignKeyConstraint(["organization_id", "original_entry_id"],
+                             ["accounting_entries.organization_id", "accounting_entries.id"]),
+        ForeignKeyConstraint(["organization_id", "reversal_entry_id"],
+                             ["accounting_entries.organization_id", "accounting_entries.id"]),
+        UniqueConstraint("organization_id", "id", name="reversal_org_id_unique"),
+        UniqueConstraint("organization_id", "original_entry_id", name="reversal_entry_unique"),
+        CheckConstraint("original_entry_id <> reversal_entry_id", name="reversal_not_self_valid"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    original_entry_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    reversal_entry_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    reason: Mapped[str] = mapped_column(String(500), nullable=False)
+    reversed_by: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("accounts.id"), nullable=False)
+    reversed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class TaxRule(Base):
+    __tablename__ = "tax_rules"
+    __table_args__ = (
+        ForeignKeyConstraint(["organization_id", "account_code"],
+                             ["chart_of_accounts.organization_id", "chart_of_accounts.account_code"]),
+        UniqueConstraint("organization_id", "category", "country", name="tax_rule_unique"),
+        UniqueConstraint("organization_id", "id", name="tax_rule_org_id_unique"),
+        CheckConstraint("rate_bps BETWEEN 0 AND 10000", name="tax_rate_valid"),
+        CheckConstraint("country ~ '^[A-Z]{2}$'", name="tax_country_format"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    category: Mapped[str] = mapped_column(String(40), nullable=False)
+    country: Mapped[str] = mapped_column(String(2), nullable=False)
+    rate_bps: Mapped[int] = mapped_column(Integer, nullable=False)
+    account_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
