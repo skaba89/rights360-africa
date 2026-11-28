@@ -2,18 +2,21 @@ import hashlib
 from typing import Literal
 from uuid import UUID,uuid4
 from fastapi import APIRouter,Depends,HTTPException,Query,Request,Response
+from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel,ConfigDict,Field,model_validator
 from sqlalchemy import text
 from starlette.concurrency import run_in_threadpool
+from app.auth import bearer,current_identity
 from app.permissions import require_permission
 from app.tenant import tenant_transaction
 from app.module_access import require_enabled_module
 from app.exploitation import audit
+from app import storage
 
 router=APIRouter(prefix="/api/v1/documents",tags=["documents"])
 MAX_BYTES=2097152
 SUBJECTS={"artist_id":("artists","artists"),"work_id":("works","works"),"operator_id":("operators","licenses"),"license_id":("exploitation_licenses","licenses")}
-META="version,sha256,size_bytes,created_by,created_at"
+META="version,sha256,size_bytes,created_by,created_at,object_key,quarantine_status"
 
 class DocumentData(BaseModel):
     model_config=ConfigDict(extra="forbid",str_strip_whitespace=True)
@@ -45,6 +48,19 @@ def get_doc(conn,doc_id,modules):
 
 def lock(conn,doc_id):
     conn.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(CAST(:id AS text),367))"),{"id":doc_id})
+
+def _identity_or_token(credentials:HTTPAuthorizationCredentials|None=Depends(bearer),token:str|None=Query(None)):
+    """Authenticate via Bearer OR a presigned ?token= (anonymous time-limited access)."""
+    if token is not None:
+        try:
+            key=storage.verify_presign(token)
+            org_str,doc_str,ver_str=key.split("|")
+            return {"presigned":True,"organization_id":UUID(org_str),"account_id":None,
+                    "doc_id":UUID(doc_str),"version":int(ver_str)}
+        except Exception:
+            raise HTTPException(401,"Invalid or expired presign token")
+    if credentials is None: raise HTTPException(401,"Not authenticated")
+    return current_identity(credentials)
 
 @router.get("")
 def listing(response:Response,limit:int=Query(50,ge=1,le=100),offset:int=Query(0,ge=0,le=1000000),identity=Depends(require_permission("documents:read"))):
@@ -82,15 +98,32 @@ def versions(doc_id:UUID,response:Response,identity=Depends(require_permission("
     return [dict(r) for r in rows]
 
 def store(doc_id,data,expected,identity):
+    org=identity["organization_id"]
     digest=hashlib.sha256(data).hexdigest()
-    with tenant_transaction(identity["organization_id"]) as conn:
+    with tenant_transaction(org) as conn:
         modules=allowed(conn);lock(conn,doc_id);get_doc(conn,doc_id,modules)
         if conn.execute(text("SELECT EXISTS(SELECT 1 FROM document_archives WHERE document_id=:id)"),{"id":doc_id}).scalar_one(): raise HTTPException(409,"Document archived")
         current=conn.execute(text("SELECT COALESCE(max(version),0) FROM document_versions WHERE document_id=:id"),{"id":doc_id}).scalar_one()
         if current!=expected or current>=20: raise HTTPException(409,"Version conflict or limit reached")
         if conn.execute(text("SELECT EXISTS(SELECT 1 FROM document_versions WHERE document_id=:id AND sha256=:digest)"),{"id":doc_id,"digest":digest}).scalar_one(): raise HTTPException(409,"Duplicate content")
-        row=conn.execute(text(f"""INSERT INTO document_versions(organization_id,document_id,version,sha256,size_bytes,content,created_by)
-        VALUES(:org,:id,:version,:digest,:size,:content,:actor) RETURNING {META}"""),{"org":identity["organization_id"],"id":doc_id,"version":current+1,"digest":digest,"size":len(data),"content":data,"actor":identity["account_id"]}).mappings().one()
+        # PHASE 6 — quota enforcement (no row => unlimited, existing tests unaffected).
+        quota=conn.execute(text("SELECT max_bytes,max_documents,enforced FROM document_quotas WHERE organization_id=:org"),{"org":org}).mappings().one_or_none()
+        if quota and quota["enforced"]:
+            used=conn.execute(text("SELECT COALESCE(sum(size_bytes),0)::bigint AS bytes,count(*) AS docs FROM document_versions WHERE organization_id=:org"),{"org":org}).one()
+            if used.bytes+len(data)>quota["max_bytes"] or used.docs>=quota["max_documents"]:
+                raise HTTPException(413,"Storage quota exceeded")
+        # PHASE 6 — quarantine on upload when the DSIG flag is lifted.
+        quarantine=conn.execute(text("SELECT public.platform_setting_bool('documents_quarantine_enabled')")).scalar_one()
+        qstatus="quarantine" if quarantine else "clean"
+        # PHASE 6 — dual-write to object storage when enabled (content stays in Postgres).
+        obj_enabled=conn.execute(text("SELECT public.platform_setting_bool('documents_object_storage_enabled')")).scalar_one()
+        object_key=None
+        if obj_enabled:
+            enc=conn.execute(text("SELECT COALESCE((SELECT encryption_enabled FROM document_storage WHERE organization_id=:org),false)"),{"org":org}).scalar_one()
+            object_key=f"{org}/{doc_id}/v{current+1}.bin"
+            storage.put(object_key,data,enc)
+        row=conn.execute(text(f"""INSERT INTO document_versions(organization_id,document_id,version,sha256,size_bytes,content,created_by,object_key,quarantine_status)
+        VALUES(:org,:id,:version,:digest,:size,:content,:actor,:object_key,:qstatus) RETURNING {META}"""),{"org":org,"id":doc_id,"version":current+1,"digest":digest,"size":len(data),"content":data,"actor":identity["account_id"],"object_key":object_key,"qstatus":qstatus}).mappings().one()
         audit(conn,identity,"document.version_created",doc_id)
     return dict(row)
 
@@ -107,14 +140,32 @@ async def upload(doc_id:UUID,request:Request,response:Response,expected_version:
     return result
 
 @router.get("/{doc_id}/versions/{version}/content")
-def download(doc_id:UUID,version:int,identity=Depends(require_permission("documents:read"))):
-    with tenant_transaction(identity["organization_id"]) as conn:
-        get_doc(conn,doc_id,allowed(conn))
-        row=conn.execute(text("SELECT content,sha256 FROM document_versions WHERE document_id=:id AND version=:version"),{"id":doc_id,"version":version}).mappings().one_or_none()
+def download(doc_id:UUID,version:int,token:str|None=Query(None),identity=Depends(_identity_or_token)):
+    org=identity["organization_id"]
+    if identity.get("presigned") and (identity["doc_id"]!=doc_id or identity["version"]!=version):
+        raise HTTPException(403,"Token does not match the requested document")
+    with tenant_transaction(org) as conn:
+        if not identity.get("presigned"):
+            modules=allowed(conn);get_doc(conn,doc_id,modules)
+        row=conn.execute(text("SELECT content,sha256,object_key,quarantine_status FROM document_versions WHERE document_id=:id AND version=:version"),{"id":doc_id,"version":version}).mappings().one_or_none()
         if row is None: raise HTTPException(404,"Version not found")
-        if hashlib.sha256(row["content"]).hexdigest()!=row["sha256"]: raise HTTPException(500,"Document integrity failure")
-        audit(conn,identity,"document.downloaded",doc_id)
-    return Response(content=row["content"],media_type="application/octet-stream",headers={"Content-Disposition":f'attachment; filename="document-{doc_id}-v{version}.pdf"',"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"})
+        # PHASE 6 — never download a quarantined document.
+        if row["quarantine_status"]=="quarantine": raise HTTPException(409,"Document in quarantine — download refused")
+        # PHASE 6 — serve from object storage when the version lives there.
+        if row["object_key"]:
+            enc=conn.execute(text("SELECT COALESCE((SELECT encryption_enabled FROM document_storage WHERE organization_id=:org),false)"),{"org":org}).scalar_one()
+            content=storage.get(row["object_key"],enc)
+        else:
+            content=row["content"]
+        if hashlib.sha256(content).hexdigest()!=row["sha256"]: raise HTTPException(500,"Document integrity failure")
+        # PHASE 6 — access journal (anonymous for presigned downloads).
+        actor=identity.get("account_id")
+        conn.execute(text("""INSERT INTO document_access_log(id,organization_id,document_id,version,action,account_id)
+            VALUES(:lid,:org,:doc,:ver,'download',:actor)"""),
+            {"lid":uuid4(),"org":org,"doc":doc_id,"ver":version,"actor":actor})
+        if not identity.get("presigned"):
+            audit(conn,identity,"document.downloaded",doc_id)
+    return Response(content=content,media_type="application/octet-stream",headers={"Content-Disposition":f'attachment; filename="document-{doc_id}-v{version}.pdf"',"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"})
 
 @router.post("/{doc_id}/archive",status_code=201)
 def archive(doc_id:UUID,response:Response,identity=Depends(require_permission("documents:archive"))):
