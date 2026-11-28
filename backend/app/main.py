@@ -3,6 +3,11 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, FileResponse
 
 from app.auth import router as auth_router
+from app.startup_checks import validate_runtime
+
+# Fail fast on a missing/invalid MFA key before serving any request, instead of
+# crashing inside app.mfa.cipher() on the first MFA operation.
+validate_runtime()
 
 app = FastAPI(title="Rights360 Africa", version="0.1.0")
 app.include_router(auth_router)
@@ -46,6 +51,8 @@ from app.acoustic_api import router as acoustic_router
 app.include_router(acoustic_router)
 from app.documents import router as documents_router
 app.include_router(documents_router)
+from app.legal import router as legal_router
+app.include_router(legal_router)
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def home():

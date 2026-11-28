@@ -20,13 +20,20 @@ jobs:
         run: python -m pip install -r requirements-dev.txt
       - name: API unit tests
         working-directory: backend
-        run: python -m pytest -v --junitxml=test-results.xml
+        run: python -m pytest -v --junitxml=test-results.xml --cov=app --cov-report=xml --cov-report=term
       - name: Upload test report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: api-test-results
           path: backend/test-results.xml
+          if-no-files-found: ignore
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-coverage
+          path: backend/coverage.xml
           if-no-files-found: ignore
   docker:
     env:
@@ -62,6 +69,12 @@ jobs:
       - name: Authentication integration checks
         run: |
           docker compose run --rm --no-deps -T --user 0 -v "${PWD}/backend:/workspace:ro" -w /workspace migrate sh -c 'python -m pip install --no-cache-dir -r requirements-dev.txt && PYTHONPATH=/workspace python tests/auth_integration.py'
+      - name: Session cap integration checks
+        run: |
+          docker compose run --rm --no-deps -T -e RIGHTS360_DISPOSABLE_E2E=1 -v "${PWD}/backend:/workspace:ro" -w /workspace migrate sh -c 'PYTHONPATH=/workspace python tests/session_integration.py'
+      - name: Legal module integration checks
+        run: |
+          docker compose run --rm --no-deps -T -e RIGHTS360_DISPOSABLE_E2E=1 -v "${PWD}/backend:/workspace:ro" -w /workspace migrate sh -c 'PYTHONPATH=/workspace python tests/legal_integration.py'
       - name: Validate operations scripts and isolated restore
         run: |
           for script in ops/*.sh; do bash -n "$script"; done
@@ -89,6 +102,14 @@ jobs:
           trap 'rm -f "$fixture"' EXIT
           docker compose run --rm --no-deps -T -e RIGHTS360_DISPOSABLE_E2E=1 -v "${PWD}/backend:/workspace:ro" -w /workspace migrate sh -c 'PYTHONPATH=/workspace python tests/seed_browser_e2e.py' > "$fixture"
           RIGHTS360_E2E_FIXTURE="$fixture" NODE_PATH=/tmp/rights360-browser/node_modules node backend/tests/business_browser.cjs
+      - name: Admin MFA enrollment browser E2E
+        timeout-minutes: 4
+        run: |
+          umask 077
+          fixture=$(mktemp)
+          trap 'rm -f "$fixture"' EXIT
+          docker compose run --rm --no-deps -T -e RIGHTS360_DISPOSABLE_E2E=1 -v "${PWD}/backend:/workspace:ro" -w /workspace migrate sh -c 'PYTHONPATH=/workspace python tests/seed_admin_e2e.py' > "$fixture"
+          RIGHTS360_E2E_FIXTURE="$fixture" NODE_PATH=/tmp/rights360-browser/node_modules node backend/tests/admin_browser.cjs
       - name: Capture container diagnostics
         if: always()
         run: |
