@@ -890,3 +890,101 @@ class PlatformSetting(Base):
     value: Mapped[str] = mapped_column(Text, nullable=False)
     updated_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+# ── PHASE 6: GED entreprise (migration 0032) ─────────────────────────────────
+# Enterprise document management: storage backend config, quotas, retention
+# policies, litigation holds, access journal, metadata. The existing documents
+# + document_versions (0026) keep their schema; new nullable columns
+# (object_key/encryption_iv/ocr_text/quarantine_status on document_versions;
+# retention_until/litigation_hold on documents) are added by the migration and
+# accessed via raw SQL in documents.py/ged.py, so the ORM classes below cover
+# only the six new tables.
+
+
+class DocumentStorage(Base):
+    __tablename__ = "document_storage"
+    __table_args__ = (
+        UniqueConstraint("organization_id", name="storage_org_unique"),
+        CheckConstraint("backend IN ('local','s3','b2')", name="storage_backend_valid"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    backend: Mapped[str] = mapped_column(String(10), nullable=False, server_default="local")
+    bucket: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    endpoint: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    region: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    credentials_ref: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    encryption_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
+    created_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class DocumentQuota(Base):
+    __tablename__ = "document_quotas"
+    __table_args__ = (CheckConstraint("max_bytes>0 AND max_documents>0", name="quota_values_valid"),)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), primary_key=True)
+    max_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    max_documents: Mapped[int] = mapped_column(Integer, nullable=False)
+    enforced: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=true())
+    updated_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class DocumentRetentionPolicy(Base):
+    __tablename__ = "document_retention_policies"
+    __table_args__ = (
+        CheckConstraint("retain_days>=0", name="retention_days_valid"),
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), primary_key=True, nullable=False)
+    category: Mapped[str] = mapped_column(String(30), primary_key=True, nullable=False)
+    retain_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    legal_hold_default: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
+    updated_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class DocumentLitigationHold(Base):
+    __tablename__ = "document_litigation_holds"
+    __table_args__ = (
+        ForeignKeyConstraint(["organization_id", "document_id"], ["documents.organization_id", "documents.id"]),
+        UniqueConstraint("organization_id", "id", name="litigation_org_id_unique"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    document_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    reason: Mapped[str] = mapped_column(String(500), nullable=False)
+    held_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    held_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DocumentAccessLog(Base):
+    __tablename__ = "document_access_log"
+    __table_args__ = (
+        CheckConstraint("action IN ('view','download','presign','scan','archive','hold','release')", name="access_action_valid"),
+        UniqueConstraint("organization_id", "id", name="access_log_org_id_unique"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    document_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    action: Mapped[str] = mapped_column(String(20), nullable=False)
+    account_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class DocumentMetadata(Base):
+    __tablename__ = "document_metadata"
+    __table_args__ = (
+        ForeignKeyConstraint(["organization_id", "document_id"], ["documents.organization_id", "documents.id"]),
+        UniqueConstraint("organization_id", "document_id", "key", name="metadata_doc_key_unique"),
+        UniqueConstraint("organization_id", "id", name="metadata_org_id_unique"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    document_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    key: Mapped[str] = mapped_column(String(80), nullable=False)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
