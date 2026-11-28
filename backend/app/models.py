@@ -775,3 +775,118 @@ class TaxRule(Base):
     country: Mapped[str] = mapped_column(String(2), nullable=False)
     rate_bps: Mapped[int] = mapped_column(Integer, nullable=False)
     account_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
+# ── PHASE 5: Banques et Mobile Money (migration 0031) ────────────────────────
+# Provider-independent payment execution layer: connector config, beneficiary
+# details, idempotent attempts, authenticated webhooks, reconciliation, and the
+# DSIG-gated platform settings table. Existing payout_orders (0022) keeps its
+# double-approval flow; new columns (provider/beneficiary_id/external_ref/
+# executed_at) are nullable so existing rows are unaffected.
+
+
+class PaymentProvider(Base):
+    __tablename__ = "payment_providers"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "provider", name="provider_kind_unique"),
+        UniqueConstraint("organization_id", "id", name="provider_org_id_unique"),
+        CheckConstraint("provider IN ('orange_money','mtn_momo','bank_transfer')", name="provider_kind_valid"),
+        CheckConstraint("mode IN ('sandbox','live')", name="provider_mode_valid"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    provider: Mapped[str] = mapped_column(String(30), nullable=False)
+    mode: Mapped[str] = mapped_column(String(10), nullable=False, server_default="sandbox")
+    api_base: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    credentials_ref: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    webhook_secret: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=true())
+    created_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class PaymentBeneficiary(Base):
+    __tablename__ = "payment_beneficiaries"
+    __table_args__ = (
+        ForeignKeyConstraint(["organization_id", "artist_id"], ["artists.organization_id", "artists.id"]),
+        UniqueConstraint("organization_id", "artist_id", "channel", name="beneficiary_artist_channel_unique"),
+        UniqueConstraint("organization_id", "id", name="beneficiary_org_id_unique"),
+        CheckConstraint("channel IN ('bank','orange_money','mtn_momo')", name="beneficiary_channel_valid"),
+        CheckConstraint("msisdn IS NOT NULL OR iban IS NOT NULL OR account_number IS NOT NULL", name="beneficiary_details_present"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    artist_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    channel: Mapped[str] = mapped_column(String(30), nullable=False)
+    msisdn: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    iban: Mapped[str | None] = mapped_column(String(34), nullable=True)
+    account_number: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    verified: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
+    verified_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class PaymentAttempt(Base):
+    __tablename__ = "payment_attempts"
+    __table_args__ = (
+        ForeignKeyConstraint(["organization_id", "payout_id"], ["payout_orders.organization_id", "payout_orders.id"]),
+        UniqueConstraint("organization_id", "idempotency_key", name="attempt_idempotency_unique"),
+        UniqueConstraint("organization_id", "payout_id", name="attempt_payout_unique"),
+        UniqueConstraint("organization_id", "id", name="attempt_org_id_unique"),
+        CheckConstraint("status IN ('pending','succeeded','failed','refunded')", name="attempt_status_valid"),
+        CheckConstraint("idempotency_key ~ '^[A-Za-z0-9_-]{8,64}$'", name="attempt_idempotency_format"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    payout_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    provider: Mapped[str] = mapped_column(String(30), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="pending")
+    external_ref: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    attempted_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PaymentWebhook(Base):
+    __tablename__ = "payment_webhooks"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "provider", "event_ref", name="webhook_event_unique"),
+        UniqueConstraint("organization_id", "id", name="webhook_org_id_unique"),
+        CheckConstraint("provider IN ('orange_money','mtn_momo','bank_transfer')", name="webhook_provider_valid"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    provider: Mapped[str] = mapped_column(String(30), nullable=False)
+    event_ref: Mapped[str] = mapped_column(String(100), nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    raw_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    matched_attempt_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class PaymentReconciliation(Base):
+    __tablename__ = "payment_reconciliations"
+    __table_args__ = (
+        ForeignKeyConstraint(["organization_id", "attempt_id"], ["payment_attempts.organization_id", "payment_attempts.id"]),
+        ForeignKeyConstraint(["organization_id", "webhook_id"], ["payment_webhooks.organization_id", "payment_webhooks.id"]),
+        UniqueConstraint("organization_id", "attempt_id", name="reconciliation_attempt_unique"),
+        UniqueConstraint("organization_id", "id", name="reconciliation_org_id_unique"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    attempt_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    webhook_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    reconciled_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    reconciled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class PlatformSetting(Base):
+    __tablename__ = "platform_settings"
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

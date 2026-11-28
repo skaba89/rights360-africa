@@ -78,6 +78,9 @@ jobs:
       - name: Finance module integration checks
         run: |
           docker compose run --rm --no-deps -T --user 0 -e RIGHTS360_DISPOSABLE_E2E=1 -v "${PWD}/backend:/workspace:ro" -w /workspace migrate sh -c 'python -m pip install --no-cache-dir -r requirements-dev.txt && PYTHONPATH=/workspace python tests/finance_integration.py'
+      - name: Payments module integration checks
+        run: |
+          docker compose run --rm --no-deps -T --user 0 -e RIGHTS360_DISPOSABLE_E2E=1 -v "${PWD}/backend:/workspace:ro" -w /workspace migrate sh -c 'python -m pip install --no-cache-dir -r requirements-dev.txt && PYTHONPATH=/workspace python tests/payments_integration.py'
       - name: Session cap integration checks
         run: |
           docker compose run --rm --no-deps -T --user 0 -e RIGHTS360_DISPOSABLE_E2E=1 -v "${PWD}/backend:/workspace:ro" -w /workspace migrate sh -c 'python -m pip install --no-cache-dir -r requirements-dev.txt && PYTHONPATH=/workspace python tests/session_integration.py'

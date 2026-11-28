@@ -33,11 +33,12 @@ def review_rows(conn,order_id):
 def orders(response:Response,limit:int=Query(50,ge=1,le=100),offset:int=Query(0,ge=0,le=1000000),identity=Depends(require_permission("billing:read"))):
     with tenant_transaction(identity["organization_id"]) as conn:
         require_enabled_module(conn,"finance")
+        enabled=conn.execute(text("SELECT public.payments_execution_enabled()")).scalar_one()
         rows=conn.execute(text("SELECT * FROM payout_orders ORDER BY created_at DESC,id LIMIT :limit OFFSET :offset"),{"limit":limit,"offset":offset}).mappings().all()
         result=[]
         for row in rows:
             reviews=review_rows(conn,row["id"])
-            result.append({**serialize(row),"status":state(reviews),"reviews":reviews,"execution_enabled":False})
+            result.append({**serialize(row),"status":state(reviews),"reviews":reviews,"execution_enabled":enabled})
     response.headers["Cache-Control"]="no-store"
     return result
 
@@ -48,6 +49,7 @@ def create(payload:Order,response:Response,identity=Depends(require_permission("
         with tenant_transaction(org) as conn:
             require_enabled_module(conn,"finance")
             require_enabled_module(conn,"royalties")
+            enabled=conn.execute(text("SELECT public.payments_execution_enabled()")).scalar_one()
             source=conn.execute(text("""SELECT d.currency,sum(l.amount_minor)::bigint AS amount_minor
             FROM royalty_distributions d JOIN royalty_distribution_lines l ON l.organization_id=d.organization_id AND l.distribution_id=d.id
             JOIN artists a ON a.organization_id=l.organization_id AND a.id=l.artist_id
@@ -62,7 +64,7 @@ def create(payload:Order,response:Response,identity=Depends(require_permission("
         if getattr(exc.orig,"sqlstate",None)=="23505": raise HTTPException(409,"Payout already prepared") from None
         raise
     response.headers["Cache-Control"]="no-store"
-    return {**serialize(row),"status":"pending","execution_enabled":False}
+    return {**serialize(row),"status":"pending","execution_enabled":enabled}
 
 @router.post("/{order_id}/reviews",status_code=201)
 def review(order_id:UUID,payload:Review,response:Response,identity=Depends(require_permission("payout:review"))):
@@ -71,6 +73,7 @@ def review(order_id:UUID,payload:Review,response:Response,identity=Depends(requi
         with tenant_transaction(identity["organization_id"]) as conn:
             require_enabled_module(conn,"finance")
             require_enabled_module(conn,"royalties")
+            enabled=conn.execute(text("SELECT public.payments_execution_enabled()")).scalar_one()
             conn.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(CAST(:id AS text),363))"),{"id":order_id})
             order=conn.execute(text("SELECT created_by FROM payout_orders WHERE id=:id"),{"id":order_id}).mappings().one_or_none()
             if order is None: raise HTTPException(404,"Payout not found")
@@ -85,4 +88,4 @@ def review(order_id:UUID,payload:Review,response:Response,identity=Depends(requi
         if getattr(exc.orig,"sqlstate",None) in ("23505","23514"): raise HTTPException(409,"Invalid review") from None
         raise
     response.headers["Cache-Control"]="no-store"
-    return {"id":order_id,"status":result,"execution_enabled":False}
+    return {"id":order_id,"status":result,"execution_enabled":enabled}
