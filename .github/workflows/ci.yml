@@ -72,6 +72,9 @@ jobs:
       - name: Session cap integration checks
         run: |
           docker compose run --rm --no-deps -T -e RIGHTS360_DISPOSABLE_E2E=1 -v "${PWD}/backend:/workspace:ro" -w /workspace migrate sh -c 'PYTHONPATH=/workspace python tests/session_integration.py'
+      - name: Legal module integration checks
+        run: |
+          docker compose run --rm --no-deps -T -e RIGHTS360_DISPOSABLE_E2E=1 -v "${PWD}/backend:/workspace:ro" -w /workspace migrate sh -c 'PYTHONPATH=/workspace python tests/legal_integration.py'
       - name: Validate operations scripts and isolated restore
         run: |
           for script in ops/*.sh; do bash -n "$script"; done
