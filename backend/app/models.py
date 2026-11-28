@@ -42,9 +42,6 @@ class AuthSession(Base):
     account_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    peer: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    user_agent: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
 class AuditEvent(Base):
     __tablename__ = "audit_events"
@@ -379,3 +376,159 @@ class AcousticReference(Base):
     signature: Mapped[list] = mapped_column(JSON,nullable=False)
     created_by: Mapped[uuid.UUID] = mapped_column(Uuid,nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),nullable=False,server_default=func.now())
+
+
+# ── PHASE 2: legal and litigation module (migration 0028) ────────────────────
+class LegalCase(Base):
+    __tablename__ = "legal_cases"
+    __table_args__ = (
+        CheckConstraint("category IN ('rights_dispute','operator_dispute','claim','share_challenge','succession','contract','other')", name="legal_case_category_valid"),
+        CheckConstraint("status IN ('open','in_review','amicable','judicial','resolved','closed','withdrawn')", name="legal_case_status_valid"),
+        CheckConstraint("priority IN ('low','normal','high','urgent')", name="legal_case_priority_valid"),
+        CheckConstraint("counterpart_type IN ('artist','operator','member','external')", name="legal_case_counterpart_valid"),
+        CheckConstraint("closed_on IS NULL OR closed_on >= opened_on", name="legal_case_dates_valid"),
+        UniqueConstraint("organization_id", "case_number", name="legal_case_number_unique"),
+        UniqueConstraint("organization_id", "id", name="legal_case_org_id_unique"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    case_number: Mapped[str] = mapped_column(String(40), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    category: Mapped[str] = mapped_column(String(40), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False, server_default="open")
+    priority: Mapped[str] = mapped_column(String(20), nullable=False, server_default="normal")
+    counterpart_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    counterpart_ref: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    opened_on: Mapped[date] = mapped_column(Date, nullable=False)
+    closed_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+class LegalCaseParty(Base):
+    __tablename__ = "legal_case_parties"
+    __table_args__ = (
+        ForeignKeyConstraint(["organization_id", "case_id"], ["legal_cases.organization_id", "legal_cases.id"], ondelete="CASCADE"),
+        CheckConstraint("role IN ('claimant','respondent','heir','representative','witness','other')", name="legal_party_role_valid"),
+        CheckConstraint("account_id IS NOT NULL OR external_name IS NOT NULL", name="legal_party_identity_required"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    case_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    account_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    external_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    external_contact: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    added_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+class LegalCaseEvent(Base):
+    __tablename__ = "legal_case_events"
+    __table_args__ = (ForeignKeyConstraint(["organization_id", "case_id"], ["legal_cases.organization_id", "legal_cases.id"], ondelete="CASCADE"),
+                      CheckConstraint("kind IN ('claim','notice','amicable','judicial','decision','hearing','correspondence','other')", name="legal_event_kind_valid"))
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    case_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    occurred_on: Mapped[date] = mapped_column(Date, nullable=False)
+    created_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+class LegalDecision(Base):
+    __tablename__ = "legal_decisions"
+    __table_args__ = (ForeignKeyConstraint(["organization_id", "case_id"], ["legal_cases.organization_id", "legal_cases.id"], ondelete="CASCADE"),
+                      CheckConstraint("status IN ('pending','approved','rejected')", name="legal_decision_status_valid"),
+                      CheckConstraint("proposed_action IN ('transition','mandate_revoke','succession_approve')", name="legal_decision_action_valid"))
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    case_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    proposed_action: Mapped[str] = mapped_column(String(40), nullable=False)
+    proposed_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="pending")
+    proposed_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    proposed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+class LegalDeadline(Base):
+    __tablename__ = "legal_deadlines"
+    __table_args__ = (ForeignKeyConstraint(["organization_id", "case_id"], ["legal_cases.organization_id", "legal_cases.id"], ondelete="CASCADE"),
+                      CheckConstraint("kind IN ('hearing','filing','response','notice','other')", name="legal_deadline_kind_valid"),
+                      CheckConstraint("status IN ('pending','met','missed')", name="legal_deadline_status_valid"))
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    case_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    label: Mapped[str] = mapped_column(String(200), nullable=False)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="pending")
+    notified: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
+    created_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+class LegalMandate(Base):
+    __tablename__ = "legal_mandates"
+    __table_args__ = (ForeignKeyConstraint(["organization_id", "case_id"], ["legal_cases.organization_id", "legal_cases.id"], ondelete="SET NULL"),
+                      CheckConstraint("mandatee_account_id IS NOT NULL OR mandatee_external IS NOT NULL", name="legal_mandatee_required"),
+                      CheckConstraint("valid_until IS NULL OR valid_until >= valid_from", name="legal_mandate_dates_valid"))
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    case_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    mandatee_account_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    mandatee_external: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    scope: Mapped[str] = mapped_column(Text, nullable=False)
+    territory: Mapped[str] = mapped_column(String(100), nullable=False)
+    valid_from: Mapped[date] = mapped_column(Date, nullable=False)
+    valid_until: Mapped[date | None] = mapped_column(Date, nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+class LegalSuccession(Base):
+    __tablename__ = "legal_successions"
+    __table_args__ = (CheckConstraint("share_basis_points BETWEEN 1 AND 10000", name="legal_succession_share_valid"),
+                      CheckConstraint("status IN ('pending','approved','rejected','revoked')", name="legal_succession_status_valid"))
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    deceased_account_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    heir_account_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    share_basis_points: Mapped[int] = mapped_column(Integer, nullable=False)
+    declared_on: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="pending")
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+class LegalContract(Base):
+    __tablename__ = "legal_contracts"
+    __table_args__ = (CheckConstraint("kind IN ('reciprocity','representation','settlement','other')", name="legal_contract_kind_valid"),
+                      CheckConstraint("status IN ('draft','active','terminated')", name="legal_contract_status_valid"),
+                      CheckConstraint("valid_until IS NULL OR valid_until >= valid_from", name="legal_contract_dates_valid"))
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    counterpart: Mapped[str] = mapped_column(String(200), nullable=False)
+    territory: Mapped[str] = mapped_column(String(100), nullable=False)
+    valid_from: Mapped[date] = mapped_column(Date, nullable=False)
+    valid_until: Mapped[date | None] = mapped_column(Date, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="draft")
+    created_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+class LegalCaseDocument(Base):
+    __tablename__ = "legal_case_documents"
+    __table_args__ = (
+        ForeignKeyConstraint(["organization_id", "case_id"], ["legal_cases.organization_id", "legal_cases.id"], ondelete="CASCADE"),
+        ForeignKeyConstraint(["organization_id", "document_id"], ["documents.organization_id", "documents.id"], ondelete="CASCADE"),
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    case_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    linked_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
