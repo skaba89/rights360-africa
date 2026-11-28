@@ -159,7 +159,7 @@ def create_case(payload: CaseData, response: Response, identity=Depends(require_
                 counterpart_type,counterpart_ref,summary,opened_on,created_by)
                 VALUES(:id,:org,:case_number,:title,:category,'open',:priority,:counterpart_type,:counterpart_ref,:summary,:opened_on,:actor)
                 RETURNING id,case_number,title,category,status,priority,counterpart_type,opened_on"""),
-                {"id": case_id, "org": identity["organization_id"], "actor": identity["account_id"], **payload.model_dump()})
+                {"id": case_id, "org": identity["organization_id"], "actor": identity["account_id"], **payload.model_dump()}).mappings().one()
             audit(conn, identity, "legal.case.created", case_id)
     except IntegrityError as exc:
         conflict(exc)
@@ -297,8 +297,9 @@ def review_decision(decision_id: UUID, payload: DecisionReview, response: Respon
             raise HTTPException(409, "Decision already reviewed")
         if str(decision["proposed_by"]) == str(actor):
             raise HTTPException(409, "Independent review required")
+        new_status = "approved" if payload.decision == "approve" else "rejected"
         conn.execute(text("UPDATE legal_decisions SET status=:status, reviewed_by=:actor, reviewed_at=now() WHERE id=:id"),
-                     {"id": decision_id, "status": payload.decision, "actor": actor})
+                     {"id": decision_id, "status": new_status, "actor": actor})
         if payload.decision == "approve" and decision["proposed_action"] == "transition":
             target = decision["proposed_status"]
             if target in ("resolved", "closed"):
@@ -311,9 +312,9 @@ def review_decision(decision_id: UUID, payload: DecisionReview, response: Respon
                 VALUES(:id,:org,:cid,'decision',:title,:desc,CURRENT_DATE,:actor)"""),
                 {"id": uuid4(), "org": identity["organization_id"], "cid": decision["case_id"],
                  "title": f"Statut validé → {target}", "desc": decision["rationale"] or "", "actor": actor})
-        audit(conn, identity, f"legal.decision.{payload.decision}", decision_id)
+        audit(conn, identity, f"legal.decision.{new_status}", decision_id)
     response.headers["Cache-Control"] = "no-store"
-    return {"id": str(decision_id), "status": payload.decision,
+    return {"id": str(decision_id), "status": new_status,
             "applied": decision["proposed_action"] if payload.decision == "approve" else None}
 
 

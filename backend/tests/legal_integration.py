@@ -177,6 +177,7 @@ def main():
             conn.execute(text("DELETE FROM account_mfa WHERE account_id IN (:a,:b)"), {"a": acc_a, "b": acc_b})
             conn.execute(text("DELETE FROM memberships WHERE account_id IN (:a,:b)"), {"a": acc_a, "b": acc_b})
             conn.execute(text("DELETE FROM accounts WHERE id IN (:a,:b)"), {"a": acc_a, "b": acc_b})
+            conn.execute(text("DELETE FROM audit_events WHERE organization_id=:org"), {"org": org})
             conn.execute(text("DELETE FROM organizations WHERE id=:org"), {"org": org})
 
 

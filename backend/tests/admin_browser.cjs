@@ -58,10 +58,13 @@ function totp(secret, t = Math.floor(Date.now() / 1000)) {
     await idle();
     await visible("#confirm-form");
 
-    // 3. Confirm with a fresh TOTP.
+    // 3. Confirm with a TOTP from the PREVIOUS 30s window. consume_code() has
+    //    replay protection (any step <= last_step is rejected), so the re-login
+    //    in step 5 must use a strictly later step than this confirm. Using the
+    //    previous window here lets the re-login reuse the current window.
     const confirmResp = page.waitForResponse(r => new URL(r.url()).pathname === "/api/v1/auth/mfa/confirm" && r.request().method() === "POST", { timeout: 15000 });
     await page.locator("#confirm-password").fill(fixture.password);
-    await page.locator("#otp").fill(totp(secret));
+    await page.locator("#otp").fill(totp(secret, Math.floor(Date.now() / 1000) - 30));
     await page.locator("#confirm-form button[type=submit]").click();
     const confirm = await confirmResp;
     assert.equal(confirm.status(), 200, "mfa/confirm");
