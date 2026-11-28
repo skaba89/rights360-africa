@@ -17,6 +17,10 @@ router = APIRouter(prefix="/api/v1/auth", tags=["authentication"])
 hasher = PasswordHasher()
 dummy_hash = hasher.hash(secrets.token_hex(32))
 bearer = HTTPBearer(auto_error=False)
+# Maximum concurrent active sessions per (account, organization). Excess oldest
+# sessions are revoked at login time so a compromised account cannot accumulate
+# an unbounded number of live tokens.
+MAX_SESSIONS = 5
 
 class Login(BaseModel):
     email: str = Field(min_length=3, max_length=254)
@@ -54,9 +58,18 @@ def current_identity(credentials: HTTPAuthorizationCredentials | None = Depends(
     identity['mfa_required'] = identity['role'] == 'admin' and not identity['mfa_enabled']
     return identity
 
+def require_admin_mfa(identity):
+    if identity["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Permission denied")
+    if not identity.get("mfa_enabled", False):
+        raise HTTPException(status_code=403, detail="MFA enrollment required")
+    return identity
+
 @router.post("/login")
 def login(payload: Login, response: Response, request: Request):
-    reserve_login(payload.email, payload.organization_id, request.client.host if request.client else 'unknown')
+    peer = request.client.host if request.client else 'unknown'
+    user_agent = (request.headers.get('user-agent') or '')[:256] or None
+    reserve_login(payload.email, payload.organization_id, peer)
     with get_engine().begin() as conn:
         account = conn.execute(text("""
           SELECT a.id, a.password_hash, m.role FROM accounts a JOIN memberships m ON m.account_id=a.id
@@ -74,8 +87,23 @@ def login(payload: Login, response: Response, request: Request):
                 raise invalid()
         token = secrets.token_urlsafe(48)
         conn.execute(text("DELETE FROM auth_sessions WHERE account_id=:account AND expires_at<=now()"), {"account":account["id"]})
-        conn.execute(text("INSERT INTO auth_sessions(token_hash,account_id,organization_id,expires_at) VALUES (:token,:account,:org,:expiry)"),
-          {"token":digest(token),"account":account["id"],"org":payload.organization_id,"expiry":datetime.now(timezone.utc)+timedelta(minutes=30)})
+        # Concurrent-session cap: keep at most MAX_SESSIONS-1 active sessions
+        # before issuing a new one, revoking the oldest first.
+        active = conn.execute(text("""
+            SELECT count(*) FROM auth_sessions
+            WHERE account_id=:account AND organization_id=:org AND expires_at>now()
+        """), {"account":account["id"],"org":payload.organization_id}).scalar_one()
+        surplus = active - (MAX_SESSIONS - 1)
+        if surplus > 0:
+            conn.execute(text("""
+                DELETE FROM auth_sessions WHERE token_hash IN (
+                    SELECT token_hash FROM auth_sessions
+                    WHERE account_id=:account AND organization_id=:org AND expires_at>now()
+                    ORDER BY issued_at ASC LIMIT :n
+                )
+            """), {"account":account["id"],"org":payload.organization_id,"n":surplus})
+        conn.execute(text("INSERT INTO auth_sessions(token_hash,account_id,organization_id,expires_at,peer,user_agent) VALUES (:token,:account,:org,:expiry,:peer,:ua)"),
+          {"token":digest(token),"account":account["id"],"org":payload.organization_id,"expiry":datetime.now(timezone.utc)+timedelta(minutes=30),"peer":peer,"ua":user_agent})
     response.headers["Cache-Control"] = "no-store"
     return {"access_token":token,"token_type":"bearer","expires_in":1800,"mfa_required":account["role"] == "admin" and not enabled}
 
@@ -90,6 +118,36 @@ def logout(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
         with get_engine().begin() as conn:
             conn.execute(text("DELETE FROM auth_sessions WHERE token_hash=:token"), {"token":digest(credentials.credentials)})
     return Response(status_code=204, headers={"Cache-Control":"no-store"})
+
+@router.get("/sessions")
+def list_sessions(response: Response, identity=Depends(current_identity)):
+    # Diagnostic tool for administrators: lists active sessions for the current
+    # account without exposing secrets (token_hash truncated to its suffix).
+    require_admin_mfa(identity)
+    response.headers["Cache-Control"] = "no-store"
+    with get_engine().connect() as conn:
+        rows = conn.execute(text("""
+            SELECT token_hash, organization_id, issued_at, expires_at, peer, user_agent
+            FROM auth_sessions WHERE account_id=:account AND expires_at>now()
+            ORDER BY issued_at DESC
+        """), {"account": identity["account_id"]}).mappings().all()
+    return [{"token_suffix": str(r["token_hash"])[-8:],
+             "organization_id": str(r["organization_id"]),
+             "issued_at": str(r["issued_at"]),
+             "expires_at": str(r["expires_at"]),
+             "peer": r["peer"],
+             "user_agent": r["user_agent"]} for r in rows]
+
+@router.post("/sessions/revoke-others", status_code=204)
+def revoke_other_sessions(credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+                          identity=Depends(current_identity)):
+    require_admin_mfa(identity)
+    with get_engine().begin() as conn:
+        conn.execute(text("""
+            DELETE FROM auth_sessions
+            WHERE account_id=:account AND token_hash<>:current AND expires_at>now()
+        """), {"account": identity["account_id"], "current": digest(credentials.credentials)})
+    return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
 class MFASetup(BaseModel):
     password: str = Field(min_length=1,max_length=256)
@@ -138,6 +196,6 @@ def regenerate_recovery(payload: MFAConfirm, request: Request, response: Respons
         lock_and_verify(conn,identity,payload.password)
         if not consume_code(conn,identity["account_id"],payload.otp):
             raise invalid()
-        codes = generate_codes(conn,identity["account_id"])
+        codes = generate_codes(conn, identity["account_id"])
     response.headers["Cache-Control"]="no-store"
     return {"recovery_codes":codes}

@@ -1,10 +1,24 @@
 from pathlib import Path
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, FileResponse
 
 from app.auth import router as auth_router
+from app.startup_checks import validate_runtime
 
-app = FastAPI(title="Rights360 Africa", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app):
+    # Fail fast on a missing/invalid MFA key before serving any request, instead
+    # of crashing inside app.mfa.cipher() on the first MFA operation. Runs on
+    # server startup (and TestClient context-manager entry); plain imports and
+    # plain TestClient(app) usage do NOT trigger it, so pytest collection and
+    # tooling that import the app are safe without a configured key.
+    validate_runtime()
+    yield
+
+
+app = FastAPI(title="Rights360 Africa", version="0.1.0", lifespan=lifespan)
 app.include_router(auth_router)
 from app.organization import router as organization_router
 app.include_router(organization_router)
