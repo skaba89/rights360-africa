@@ -42,9 +42,6 @@ class AuthSession(Base):
     account_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    peer: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    user_agent: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
 class AuditEvent(Base):
     __tablename__ = "audit_events"
@@ -391,6 +388,7 @@ class LegalCase(Base):
         CheckConstraint("counterpart_type IN ('artist','operator','member','external')", name="legal_case_counterpart_valid"),
         CheckConstraint("closed_on IS NULL OR closed_on >= opened_on", name="legal_case_dates_valid"),
         UniqueConstraint("organization_id", "case_number", name="legal_case_number_unique"),
+        UniqueConstraint("organization_id", "id", name="legal_case_org_id_unique"),
     )
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
@@ -534,3 +532,108 @@ class LegalCaseDocument(Base):
     document_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
     linked_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+# ── PHASE 3: advanced copyright and related rights (migration 0029) ─────────
+class Recording(Base):
+    __tablename__ = "recordings"
+    __table_args__ = (
+        ForeignKeyConstraint(["organization_id", "work_id"], ["works.organization_id", "works.id"], ondelete="CASCADE"),
+        CheckConstraint("isrc ~ '^[A-Z]{2}[0-9A-Z]{3}[0-9]{2}[0-9]{5}$'", name="recording_isrc_format"),
+        UniqueConstraint("organization_id", "isrc", name="recording_isrc_unique"),
+        Index("ix_recordings_work", "organization_id", "work_id"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    work_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    isrc: Mapped[str] = mapped_column(String(12), nullable=False)
+    title: Mapped[str] = mapped_column(String(250), nullable=False)
+    duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+class RightsGrant(Base):
+    __tablename__ = "rights_grants"
+    __table_args__ = (
+        ForeignKeyConstraint(["organization_id", "work_id"], ["works.organization_id", "works.id"], ondelete="CASCADE"),
+        ForeignKeyConstraint(["organization_id", "artist_id"], ["artists.organization_id", "artists.id"], ondelete="CASCADE"),
+        CheckConstraint("role IN ('author','composer','publisher','producer_phonographic','producer_audiovisual','performer','heir','mandatary','other')", name="rights_grant_role_valid"),
+        CheckConstraint("scope IN ('collective','direct')", name="rights_grant_scope_valid"),
+        CheckConstraint("basis_points BETWEEN 1 AND 10000", name="rights_grant_basis_valid"),
+        CheckConstraint("status IN ('active','terminated','disputed')", name="rights_grant_status_valid"),
+        CheckConstraint("valid_until IS NULL OR valid_until >= valid_from", name="rights_grant_dates_valid"),
+        Index("ix_rights_grants_work", "organization_id", "work_id"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    work_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    artist_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    role: Mapped[str] = mapped_column(String(40), nullable=False)
+    territory: Mapped[str] = mapped_column(String(100), nullable=False)
+    scope: Mapped[str] = mapped_column(String(20), nullable=False)
+    basis_points: Mapped[int] = mapped_column(Integer, nullable=False)
+    valid_from: Mapped[date] = mapped_column(Date, nullable=False)
+    valid_until: Mapped[date | None] = mapped_column(Date, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="active")
+    created_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+class DistributionRule(Base):
+    __tablename__ = "distribution_rules"
+    __table_args__ = (
+        CheckConstraint("version > 0", name="distribution_rule_version_positive"),
+        CheckConstraint("rule_category IN ('mechanical','performance','broadcast','synchronization','digital','public_lending','other')", name="distribution_rule_category_valid"),
+        CheckConstraint("status IN ('draft','active','superseded')", name="distribution_rule_status_valid"),
+        UniqueConstraint("organization_id", "rule_category", "version", name="distribution_rule_version_unique"),
+        Index("ix_distribution_rules_category", "organization_id", "rule_category", "version"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    rule_category: Mapped[str] = mapped_column(String(40), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    allocation: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="draft")
+    created_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+class RightsUnidentified(Base):
+    __tablename__ = "rights_unidentified"
+    __table_args__ = (
+        ForeignKeyConstraint(["organization_id", "distribution_id"], ["royalty_distributions.organization_id", "royalty_distributions.id"], ondelete="SET NULL"),
+        CheckConstraint("amount_minor > 0", name="rights_unidentified_amount_positive"),
+        CheckConstraint("status IN ('pending','identified','claimed','expired')", name="rights_unidentified_status_valid"),
+        UniqueConstraint("organization_id", "id", name="rights_unidentified_org_id_unique"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    distribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    amount_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    reason: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="pending")
+    created_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+class RightsClaim(Base):
+    __tablename__ = "rights_claims"
+    __table_args__ = (
+        ForeignKeyConstraint(["organization_id", "claimant_artist_id"], ["artists.organization_id", "artists.id"], ondelete="CASCADE"),
+        ForeignKeyConstraint(["organization_id", "work_id"], ["works.organization_id", "works.id"], ondelete="SET NULL"),
+        ForeignKeyConstraint(["organization_id", "unidentified_id"], ["rights_unidentified.organization_id", "rights_unidentified.id"], ondelete="SET NULL"),
+        CheckConstraint("amount_minor > 0", name="rights_claim_amount_positive"),
+        CheckConstraint("status IN ('pending','approved','rejected','paid')", name="rights_claim_status_valid"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=False)
+    claimant_artist_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    work_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    unidentified_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    amount_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    justification: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="pending")
+    proposed_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    proposed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

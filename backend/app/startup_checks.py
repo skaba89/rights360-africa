@@ -1,8 +1,11 @@
-"""Fail-fast runtime checks executed at application import time.
+"""Fail-fast runtime checks executed at application startup (FastAPI lifespan).
 
 Validates that required secrets are present and well-formed BEFORE the first
 request, so a misconfigured ``uvicorn app.main:app`` fails with a clear message
 instead of crashing inside ``app.mfa.cipher()`` on the first MFA operation.
+Invoked from the app lifespan, not at import time: plain imports and plain
+``TestClient(app)`` usage do not trigger it (only server startup and
+``with TestClient(app)`` do), so pytest collection is safe without a key.
 """
 import os
 from cryptography.fernet import Fernet

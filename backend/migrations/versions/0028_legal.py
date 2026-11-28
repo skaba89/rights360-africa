@@ -60,7 +60,8 @@ def upgrade():
         sa.CheckConstraint("priority IN ('low','normal','high','urgent')", name="legal_case_priority_valid"),
         sa.CheckConstraint("counterpart_type IN ('artist','operator','member','external')", name="legal_case_counterpart_valid"),
         sa.CheckConstraint("closed_on IS NULL OR closed_on >= opened_on", name="legal_case_dates_valid"),
-        sa.UniqueConstraint("organization_id", "case_number", name="legal_case_number_unique"))
+        sa.UniqueConstraint("organization_id", "case_number", name="legal_case_number_unique"),
+        sa.UniqueConstraint("organization_id", "id", name="legal_case_org_id_unique"))
     op.create_index("ix_legal_cases_status", "legal_cases", ["organization_id", "status"])
 
     # 2. Parties au dossier (ayants droit, exploitants, héritiers, mandataires, externes)
