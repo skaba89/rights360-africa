@@ -64,6 +64,8 @@ from app.legal import router as legal_router
 app.include_router(legal_router)
 from app.rights_advanced import router as rights_advanced_router
 app.include_router(rights_advanced_router)
+from app.finance import router as finance_router
+app.include_router(finance_router)
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def home():
